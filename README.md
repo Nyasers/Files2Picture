@@ -40,7 +40,7 @@ npm install
 npm run build
 ```
 
-产物在 `out/index.html`，单文件零外部引用。直接用浏览器打开即可。
+产物在 `dist/index.html`，单文件零外部引用。直接用浏览器打开即可。
 
 ## 部署
 
@@ -50,7 +50,7 @@ npm run build
 |---|---|
 | 框架 | 无（纯静态） |
 | 构建命令 | `npm install && npm run build` |
-| 构建输出目录 | `out` |
+| 构建输出目录 | `dist` |
 | 生产分支 | `main` |
 | 部署命令 | 留空（Pages 自动部署） |
 
@@ -60,5 +60,5 @@ npm run build
 
 ```bash
 npm install && npm run build
-npx wrangler pages deploy out --project-name=files2picture
+npx wrangler pages deploy dist --project-name=f2p
 ```
