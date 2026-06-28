@@ -2,6 +2,8 @@
 // F2P_pure · 纯隐写 · 流式编码 · 按需解码
 // ══════════════════════════════════════════════
 
+import "./style.css";
+
 const $ = (id) => document.getElementById(id);
 const encInput = $("encInput"),
   encDrop = $("encDrop"),
