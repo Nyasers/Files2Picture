@@ -1,4 +1,4 @@
-# F2P · Files to Picture
+# Files2Picture · Files to Picture
 
 纯前端 BMP 隐写工具，把任意文件直接写进像素字节。
 
@@ -52,10 +52,13 @@ npm run build
 | 构建命令 | `npm install && npm run build` |
 | 构建输出目录 | `out` |
 | 生产分支 | `main` |
+| 部署命令 | 留空（Pages 自动部署） |
+
+**注意**：CF Pages 的部署命令不要填 `npx wrangler deploy`，那是 Worker 的写法。Pages 项目只需要构建输出目录，部署是自动的。
 
 也支持手动部署：
 
 ```bash
 npm install && npm run build
-npx wrangler pages deploy out --project-name=f2p
+npx wrangler pages deploy out --project-name=files2picture
 ```
