@@ -1,0 +1,15 @@
+{
+  "name": "f2p",
+  "version": "1.0.0",
+  "description": "纯前端 BMP 隐写工具 — 文件直写像素，零依赖运行",
+  "private": true,
+  "scripts": {
+    "build": "node build.js"
+  },
+  "dependencies": {
+    "clean-css": "^5.3.3",
+    "html-minifier-terser": "^7.2.0",
+    "terser": "^5.48.0"
+  },
+  "license": "MIT"
+}
