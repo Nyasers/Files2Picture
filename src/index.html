@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+    <title>F2P · Files to Picture</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="c">
+      <h1>📦 F2P <small>Files to Picture</small></h1>
+      <div class="sub">文件直写 BMP 像素，无压缩无打包，纯隐写。</div>
+
+      <div class="toast-container" id="toastContainer"></div>
+
+      <div class="grid">
+        <!-- ═══ 编码 ═══ -->
+        <div class="card">
+          <h2>🔒 编码</h2>
+          <label>📂 选择文件</label>
+          <div class="drop-zone" id="encDrop">
+            <input type="file" id="encInput" multiple />
+            <div class="icon">📁</div>
+            <div class="text">拖放文件，或点击选择</div>
+            <div class="hint">支持任意格式，可追加</div>
+          </div>
+          <div class="file-list" id="fileList" style="display: none"></div>
+          <div class="btn-group">
+            <button class="btn" id="encBtn" disabled>🎨 生成图片</button>
+            <button class="btn-ghost" id="clearBtn" style="display: none">
+              ✕ 清空
+            </button>
+          </div>
+          <div class="progress-wrap" id="encProg">
+            <div class="progress-bar" id="encBar"></div>
+          </div>
+          <div class="status" id="encStatus">等待文件选择…</div>
+          <div class="result-box" id="encResult">
+            <div class="info">
+              <span id="imgInfo">-</span>
+              <a href="#" id="dlLink" class="dl-link" download>⬇️ 下载</a>
+            </div>
+          </div>
+        </div>
+
+        <!-- ═══ 解码 ═══ -->
+        <div class="card">
+          <h2>🔓 解码</h2>
+          <label>📤 上传隐写图片</label>
+          <div class="drop-zone" id="decDrop">
+            <input type="file" id="decInput" />
+            <div class="icon">🖼️</div>
+            <div class="text" id="decText">拖放图片，或点击选择</div>
+            <div class="hint" id="decHint">通过文件头自动识别</div>
+          </div>
+          <div class="btn-group">
+            <button class="btn" id="decBtn" disabled>🔎 提取</button>
+            <button class="btn-ghost" id="decClearBtn">✕ 清空</button>
+          </div>
+          <div class="progress-wrap" id="decProg">
+            <div class="progress-bar" id="decBar"></div>
+          </div>
+          <div class="status" id="decStatus">等待图片上传…</div>
+          <div class="result-box" id="decResult">
+            <div style="font-size: 0.8rem; color: #aaa; margin-bottom: 6px">
+              📄 提取的文件
+            </div>
+            <div
+              class="file-list"
+              id="decFiles"
+              style="max-height: 320px"
+            ></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="note">BMP 直写直读，文件不经过服务器。</div>
+    </div>
+    <script src="main.js"></script>
+  </body>
+</html>
