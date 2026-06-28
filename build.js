@@ -102,7 +102,7 @@ async function main() {
     `  HTML: ${html.length} → ${htmlMin.length} (${pct(html, htmlMin)})`,
   );
 
-  const outDir = path.join(dir, "out");
+  const outDir = path.join(dir, "dist");
   fs.mkdirSync(outDir, { recursive: true });
   const outPath = path.join(outDir, "index.html");
   fs.writeFileSync(outPath, htmlMin, "utf8");
