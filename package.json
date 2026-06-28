@@ -1,15 +1,21 @@
 {
   "name": "f2p",
   "version": "1.0.0",
-  "description": "纯前端 BMP 隐写工具 — 文件直写像素，零依赖运行",
+  "description": "打包隐写不压缩 — 纯前端 BMP 打包工具",
   "private": true,
   "scripts": {
-    "build": "node build.js"
+    "build": "node build.js",
+    "dev": "set NODE_ENV=development && rspack dev --config rspack.config.cjs"
   },
   "devDependencies": {
+    "@rspack/cli": "^2.1.1",
     "@rspack/core": "^2.1.1",
+    "@rspack/dev-server": "^2.1.0",
     "css-loader": "^7.1.4",
     "html-minifier-terser": "^7.2.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "streamsaver": "^2.0.6"
+  }
 }

@@ -48,7 +48,65 @@ h1 small {
     gap: 2rem;
   }
 }
-.card {
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 1rem;
+  background: #1a1a1a;
+  border-radius: 10px;
+  padding: 6px;
+  border: 1px solid #2a2a2a;
+}
+.mode-tabs {
+  display: flex;
+  gap: 4px;
+}
+.mode-btn {
+  background: transparent;
+  color: #888;
+  border: none;
+  padding: 8px 18px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.mode-btn:hover {
+  color: #ccc;
+  background: #2a2a2a;
+}
+.mode-btn.active {
+  color: #fff;
+  background: #3a3aff;
+}
+.chunk-select {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.chunk-select label {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #888;
+}
+.chunk-select select {
+  background: #2a2a2a;
+  color: #ccc;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.chunk-select select:hover {
+  border-color: #555;
+}
+.section {
+  margin-top: 1.5rem;
+}
+.section .card {
   background: #1e1e1e;
   border-radius: 12px;
   padding: 1.2rem;
@@ -230,6 +288,9 @@ label {
 }
 
 .status {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 0.82rem;
   color: #888;
   margin-top: 4px;

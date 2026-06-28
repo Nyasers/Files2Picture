@@ -1,8 +1,11 @@
 // ══════════════════════════════════════════════
-// F2P_pure · 纯隐写 · 流式编码 · 按需解码
+// F2P_pure · 流式隐写 · StreamSaver 直写 · 按需解码
 // ══════════════════════════════════════════════
 
 import "./style.css";
+import streamSaver from "streamsaver";
+
+streamSaver.mitm = "mitm.html";
 
 const $ = (id) => document.getElementById(id);
 const encInput = $("encInput"),
@@ -27,7 +30,25 @@ const decProg = $("decProg"),
   decStatus = $("decStatus"),
   decResult = $("decResult"),
   decFiles = $("decFiles");
-const tc = $("toastContainer");
+const tc = $("toastContainer"),
+  chunkSizeInput = $("chunkSize"),
+  tabEnc = $("tabEnc"),
+  tabDec = $("tabDec"),
+  encSection = $("encSection"),
+  decSection = $("decSection");
+
+tabEnc.addEventListener("click", () => {
+  tabEnc.classList.add("active");
+  tabDec.classList.remove("active");
+  encSection.style.display = "";
+  decSection.style.display = "none";
+});
+tabDec.addEventListener("click", () => {
+  tabDec.classList.add("active");
+  tabEnc.classList.remove("active");
+  decSection.style.display = "";
+  encSection.style.display = "none";
+});
 
 function toast(m, d = 2500) {
   const e = document.createElement("div");
@@ -49,22 +70,55 @@ function fmt(b) {
 const TE = new TextEncoder(),
   TD = new TextDecoder();
 
+function readSlice(blob, start, end) {
+  return new Promise((rs, rj) => {
+    const r = new FileReader();
+    r.onload = () => rs(new Uint8Array(r.result));
+    r.onerror = () => rj(r.error);
+    r.readAsArrayBuffer(blob.slice(start, end));
+  });
+}
+
+async function readChunk(file, start, end, trySize) {
+  try {
+    const buf = await file.slice(start, end).arrayBuffer();
+    return new Uint8Array(buf);
+  } catch {
+    // arrayBuffer 失败，降级到 FileReader
+    try {
+      return await readSlice(file, start, end);
+    } catch {
+      // FileReader 也失败，减半分块重试
+      const half = Math.max(trySize >>> 1, 1024);
+      if (half < trySize && start + half < end) {
+        const a = await readChunk(file, start, start + half, half);
+        const b = await readChunk(file, start + half, end, half);
+        const mg = new Uint8Array(a.length + b.length);
+        mg.set(a);
+        mg.set(b, a.length);
+        return mg;
+      }
+      throw new Error("无法读取文件");
+    }
+  }
+}
+
 // ═══════════════════════════════════════ 流式 BMP 编码 ══
 
-function buildBMP(payloadSize) {
-  const ps = 4 + payloadSize,
-    np = Math.ceil(ps / 3),
-    sz = Math.max(4, Math.ceil(Math.sqrt(np))),
-    w = sz,
+function buildBMPStream(payloadSize, onRow) {
+  const ps = 8 + payloadSize; // 4 = marker + 2 = fc
+  const np = Math.ceil(ps / 3);
+  const sz = Math.max(4, Math.ceil(Math.sqrt(np)));
+  const w = sz,
     h = sz;
-  const st = w * 3,
-    rp = (4 - (st % 4)) % 4,
-    rb = st + rp,
-    pds = rb * h,
-    fs = 14 + 40 + pds;
-  const b = new ArrayBuffer(fs),
-    v = new DataView(b),
-    px = new Uint8Array(b, 54);
+  const st = w * 3;
+  const rp = (4 - (st % 4)) % 4;
+  const rb = st + rp;
+  const pds = rb * h;
+  const fs = 14 + 40 + pds;
+
+  const hdr = new ArrayBuffer(54);
+  const v = new DataView(hdr);
   v.setUint8(0, 0x42);
   v.setUint8(1, 0x4d);
   v.setUint32(2, fs, true);
@@ -82,120 +136,162 @@ function buildBMP(payloadSize) {
   v.setInt32(42, 2835, true);
   v.setUint32(46, 0, true);
   v.setUint32(50, 0, true);
-  let bp = 0,
-    bw = 0;
+
+  let rowBuf = new Uint8Array(rb);
+  let col = 0;
+  let bp = 0;
+  let headBuf = [];
   const ch = [2, 1, 0];
+  let writeChain = Promise.resolve();
+
+  function flushRow() {
+    if (onRow) {
+      const copy = new Uint8Array(rowBuf);
+      writeChain = writeChain.then(() => onRow(copy));
+    }
+    rowBuf = new Uint8Array(rb);
+    col = 0;
+  }
+
+  // pad 完成后等待所有写入完成
+  function flushAll() {
+    return writeChain;
+  }
+
   return {
     w,
     h,
-    rb,
-    fs,
-    w32(v) {
-      this.w8(v >>> 24);
-      this.w8(v >>> 16);
-      this.w8(v >>> 8);
-      this.w8(v & 255);
+    header: new Uint8Array(hdr),
+    get headBytes() {
+      return new Uint8Array(headBuf);
+    },
+
+    wChunk(arr) {
+      let i = 0,
+        n = arr.length;
+      while (i < n && bp < ps) {
+        if (bp % 3 === 0 && i + 3 <= n && bp + 3 <= ps) {
+          const off = col * 3;
+          rowBuf[off + 2] = arr[i];
+          rowBuf[off + 1] = arr[i + 1];
+          rowBuf[off + 0] = arr[i + 2];
+          for (let j = 0; j < 3 && headBuf.length < 16; j++)
+            headBuf.push(arr[i + j]);
+          i += 3;
+          bp += 3;
+          col++;
+        } else {
+          const off = col * 3;
+          rowBuf[off + ch[bp % 3]] = arr[i];
+          if (headBuf.length < 16) headBuf.push(arr[i]);
+          i++;
+          bp++;
+          if (bp % 3 === 0) col++;
+        }
+        if (col >= w) flushRow();
+      }
+    },
+
+    w8(v) {
+      this.wChunk(new Uint8Array([v]));
     },
     w16(v) {
-      this.w8(v >>> 8);
-      this.w8(v & 255);
+      this.wChunk(new Uint8Array([v >>> 8, v & 255]));
     },
-    w8(b) {
-      if (bp >= ps) return;
-      const p = (bp / 3) | 0;
-      px[((p / w) | 0) * rb + (p % w) * 3 + ch[bp % 3]] = b;
-      bp++;
-      bw++;
+    w32(v) {
+      this.wChunk(new Uint8Array([v >>> 24, v >>> 16, v >>> 8, v & 255]));
     },
-    wChunk(a) {
-      let i = 0;
-      const n = a.length;
-      while (i + 2 < n && bp + 2 < ps && bp % 3 === 0) {
-        const p = (bp / 3) | 0,
-          b = ((p / w) | 0) * rb + (p % w) * 3;
-        px[b + 2] = a[i];
-        px[b + 1] = a[i + 1];
-        px[b] = a[i + 2];
-        bp += 3;
-        bw += 3;
-        i += 3;
-      }
-      while (i < n && bp < ps) {
-        if (bp % 3 === 0 && i + 2 < n && bp + 2 < ps) {
-          const p = (bp / 3) | 0,
-            b = ((p / w) | 0) * rb + (p % w) * 3;
-          px[b + 2] = a[i];
-          px[b + 1] = a[i + 1];
-          px[b] = a[i + 2];
-          bp += 3;
-          bw += 3;
-          i += 3;
-        } else {
-          const p = (bp / 3) | 0;
-          px[((p / w) | 0) * rb + (p % w) * 3 + ch[bp % 3]] = a[i];
-          bp++;
-          bw++;
-          i++;
-        }
-      }
+    w64(v) {
+      const hi = Math.floor(v / 0x100000000) >>> 0;
+      const lo = v >>> 0;
+      this.wChunk(
+        new Uint8Array([
+          (hi >>> 24) & 0xff,
+          (hi >>> 16) & 0xff,
+          (hi >>> 8) & 0xff,
+          hi & 0xff,
+          (lo >>> 24) & 0xff,
+          (lo >>> 16) & 0xff,
+          (lo >>> 8) & 0xff,
+          lo & 0xff,
+        ]),
+      );
     },
+
     pad() {
-      while (bp < ps) this.w8(0);
+      if (bp < ps) this.wChunk(new Uint8Array(ps - bp));
+      if (col > 0 && onRow) {
+        const copy = new Uint8Array(rowBuf);
+        writeChain = writeChain.then(() => onRow(copy));
+      }
     },
-    buf() {
-      return b;
+    flushAll() {
+      return writeChain;
     },
   };
 }
 
-// ═══════════════════════════════════════ BMP 按需解码 ══
-// 格式: [4B plen(不含自身)] [2B fcnt] [所有元信息] [所有数据]
+// ═══════════════════════════════════════ 流式 BMP 解码 ══
 
-function bmpMeta(ab) {
-  const v = new DataView(ab);
+async function readBmpHeader(blob) {
+  const buf = await blob.slice(0, 54).arrayBuffer();
+  const v = new DataView(buf);
   if (v.getUint8(0) !== 0x42 || v.getUint8(1) !== 0x4d) throw Error("不是 BMP");
   if (v.getUint16(28, true) !== 24) throw Error("仅支持 24-bit BMP");
-  const po = v.getUint32(10, true),
-    w = v.getInt32(18, true),
-    hr = v.getInt32(22, true);
-  const h = hr < 0 ? -hr : hr,
-    st = w * 3,
-    rp = (4 - (st % 4)) % 4;
-  return { w, h, rb: st + rp, po, ab };
+  const po = v.getUint32(10, true);
+  const w = v.getInt32(18, true);
+  const hr = v.getInt32(22, true);
+  const h = hr < 0 ? -hr : hr;
+  const st = w * 3;
+  const rp = (4 - (st % 4)) % 4;
+  return { w, h, rb: st + rp, po, blob };
 }
 
-function pxRead(m, bp, len) {
-  const v = new DataView(m.ab),
-    { w, rb, po } = m,
-    o = new Uint8Array(len),
-    ch = [2, 1, 0];
-  for (let i = 0; i < len; i++, bp++) {
-    const p = (bp / 3) | 0,
-      off = po + ((p / w) | 0) * rb + (p % w) * 3 + ch[bp % 3];
-    o[i] = v.getUint8(off);
+// 按行读取 payload 字节 (局部缓存)
+async function readPayload(m, bp, len) {
+  const chMap = [2, 1, 0];
+  const out = new Uint8Array(len);
+  let off = 0;
+  const { w, po, rb, blob } = m;
+  let cacheIdx = -1,
+    cacheRow = null;
+  while (off < len) {
+    const pxIdx = ((bp + off) / 3) | 0;
+    const row = (pxIdx / w) | 0;
+    const maxInRow = (w - (pxIdx % w)) * 3;
+    const want = Math.min(len - off, maxInRow);
+    if (cacheIdx !== row) {
+      cacheRow = new Uint8Array(
+        await blob.slice(po + row * rb, po + (row + 1) * rb).arrayBuffer(),
+      );
+      cacheIdx = row;
+    }
+    for (let j = 0; j < want; j++) {
+      const pIdx = ((bp + off + j) / 3) | 0;
+      out[off + j] = cacheRow[(pIdx % w) * 3 + chMap[(bp + off + j) % 3]];
+    }
+    off += want;
   }
-  return o;
+  return out;
 }
 
-function decMeta(m) {
-  const pl =
-    (pxRead(m, 0, 1)[0] << 24) |
-    (pxRead(m, 1, 1)[0] << 16) |
-    (pxRead(m, 2, 1)[0] << 8) |
-    pxRead(m, 3, 1)[0];
-  if (pl < 2) throw Error("payload 为空");
-  const fc = (pxRead(m, 4, 1)[0] << 8) | pxRead(m, 5, 1)[0];
-  const ms = 6;
-  let buf = pxRead(m, ms, Math.min(pl - 2, 65536));
+// 解析 payload 元信息
+async function decMetaStream(m) {
+  const hdr = await readPayload(m, 0, 8);
+  const marker = (hdr[0] << 24) | (hdr[1] << 16) | (hdr[2] << 8) | hdr[3];
+  const newFmt = marker === 0x46325031; // "F2P1"
+  const fc = newFmt
+    ? ((hdr[4] << 24) | (hdr[5] << 16) | (hdr[6] << 8) | hdr[7]) >>> 0
+    : (hdr[4] << 8) | hdr[5];
+
+  const ms = newFmt ? 8 : 6;
+  let buf = await readPayload(m, ms, 65536);
   let off = 0;
   const ent = [];
   for (let i = 0; i < fc; i++) {
-    while (off + 6 > buf.length) {
-      const more = pxRead(
-        m,
-        ms + buf.length,
-        Math.min(pl - 2 - buf.length, 65536),
-      );
+    while (off + (newFmt ? 10 : 6) > buf.length) {
+      const more = await readPayload(m, ms + buf.length, 65536);
+      if (buf.length >= 0x10000000) throw Error("元信息过大");
       const mg = new Uint8Array(buf.length + more.length);
       mg.set(buf);
       mg.set(more, buf.length);
@@ -205,19 +301,37 @@ function decMeta(m) {
     off += 2;
     const nm = TD.decode(buf.subarray(off, off + nl));
     off += nl;
-    const dl =
-      (buf[off] << 24) |
-      (buf[off + 1] << 16) |
-      (buf[off + 2] << 8) |
-      buf[off + 3];
-    off += 4;
+    let dl;
+    if (newFmt) {
+      const hi =
+        (buf[off] << 24) |
+        (buf[off + 1] << 16) |
+        (buf[off + 2] << 8) |
+        buf[off + 3];
+      const lo =
+        (buf[off + 4] << 24) |
+        (buf[off + 5] << 16) |
+        (buf[off + 6] << 8) |
+        buf[off + 7];
+      dl = hi * 0x100000000 + (lo >>> 0);
+      off += 8;
+    } else {
+      dl =
+        ((buf[off] << 24) |
+          (buf[off + 1] << 16) |
+          (buf[off + 2] << 8) |
+          buf[off + 3]) >>>
+        0;
+      off += 4;
+    }
     ent.push({ name: nm, size: dl });
   }
-  return { ent, pl, m, ds: ms + off };
-}
-
-function extFile(m, ds, prev, sz) {
-  return pxRead(m, ds + prev, sz);
+  const sizeField = newFmt ? 8 : 4;
+  const payloadSize = ent.reduce(
+    (s, f) => s + 2 + TE.encode(f.name).length + sizeField + f.size,
+    0,
+  );
+  return { ent, payloadSize, m, ds: ms + off };
 }
 
 // ═══════════════════════════════════════ 文件选择 ══
@@ -337,69 +451,118 @@ async function doEnc() {
   const t0 = performance.now();
   try {
     encResult.classList.remove("show");
+    dlLink.style.display = "";
     sp(encProg, encBar, 5);
     let ms = 0,
       ds = 0;
     for (const f of sel)
-      ((ms += 2 + TE.encode(f.name).length + 4), (ds += f.size));
-    const ps = 2 + ms + ds;
+      ((ms += 2 + TE.encode(f.name).length + 8), (ds += f.size));
     sp(encProg, encBar, 15);
-    const bmp = buildBMP(ps),
+
+    const ts = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "");
+    const fileStream = streamSaver.createWriteStream("F2P_" + ts + ".bmp");
+    const writer = fileStream.getWriter();
+    let cancelled = false;
+
+    const bmp = buildBMPStream(ms + ds, (row) => {
+        writer.write(row).catch(() => {
+          cancelled = true;
+        });
+      }),
       { w, h } = bmp;
-    bmp.w32(ps);
-    bmp.w16(sel.length);
+
+    await writer.write(bmp.header).catch(() => {
+      cancelled = true;
+    });
+    if (cancelled) throw Error("下载已取消");
+
+    bmp.w32(0x46325031); // "F2P1" version=1
+    bmp.w32(sel.length);
     for (const f of sel) {
       const nb = TE.encode(f.name);
       bmp.w16(nb.length);
       bmp.wChunk(nb);
-      bmp.w32(f.size);
+      bmp.w64(f.size);
     }
-    const n = sel.length;
-    let d = 0;
+
+    let processed = 0,
+      fileIdx = 0;
     for (const f of sel) {
-      encStatus.textContent = "⏳ " + (d + 1) + "/" + n + " " + f.name;
-      sp(encProg, encBar, 20 + (((d / n) * 60) | 0));
+      encStatus.innerHTML =
+        "<span>⏳ (" +
+        ++fileIdx +
+        "/" +
+        sel.length +
+        ") " +
+        fmt(processed) +
+        "/" +
+        fmt(ds) +
+        '</span><span style="text-align:right">' +
+        f.name +
+        "</span>";
+      sp(encProg, encBar, 20 + (((processed / ds) * 60) | 0));
       try {
-        const r = f.stream().getReader();
-        while (true) {
-          const { value, done: rd } = await r.read();
-          if (rd) break;
-          bmp.wChunk(value);
+        const chunk = (parseInt(chunkSizeInput.value) || 64) * 1024;
+        let pos = 0;
+        while (pos < f.size) {
+          const end = Math.min(pos + chunk, f.size);
+          const buf = await readChunk(f, pos, end, chunk);
+          bmp.wChunk(buf);
+          pos = end;
         }
       } catch (e) {
+        console.error(e);
         throw Error("读取失败: " + f.name);
       }
-      d++;
+      if (cancelled) throw Error("下载已取消");
+      processed += f.size;
+      await new Promise((r) => setTimeout(r, 50));
     }
+
     sp(encProg, encBar, 85);
+    if (cancelled) throw Error("下载已取消");
     bmp.pad();
-    const bl = new Blob([bmp.buf()], { type: "image/bmp" }),
-      u = URL.createObjectURL(bl),
-      ts = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "");
-    const chk = new DataView(bmp.buf());
-    let hx = "";
-    for (let i = 54; i < 70; i++)
-      hx += chk.getUint8(i).toString(16).padStart(2, "0") + " ";
-    dlLink.href = u;
-    dlLink.download = "F2P_" + ts + ".bmp";
+    await bmp.flushAll();
+    if (cancelled) throw Error("下载已取消");
+    await writer.close().catch(() => {});
+
+    const hx = Array.from(bmp.headBytes)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join(" ");
     imgInfo.textContent =
-      "尺寸: " + w + "×" + h + " | " + fmt(ps) + " | 前16B: " + hx;
+      "尺寸: " + w + "×" + h + " | " + fmt(ms + ds) + " | 前16B: " + hx;
+    dlLink.textContent = "💾 已保存";
+    dlLink.style.pointerEvents = "none";
+    dlLink.href = "#";
     encResult.classList.add("show");
     encStatus.textContent =
       "✅ " +
       sel.length +
       " 个文件 · " +
-      fmt(ps) +
+      fmt(ms + ds) +
       " · " +
       ((performance.now() - t0) / 1e3).toFixed(1) +
       "s";
     encStatus.className = "status ok";
     sp(encProg, encBar, 100);
     setTimeout(() => hp(encProg, encBar), 1500);
-    toast("✅ BMP 已生成");
+    toast("✅ BMP 已保存");
   } catch (e) {
-    encStatus.textContent = "❌ " + e.message;
-    encStatus.className = "status err";
+    console.error(e);
+    const msg = e.message || "";
+    if (
+      msg.includes("abort") ||
+      msg.includes("Abort") ||
+      msg.includes("cancel") ||
+      msg.includes("close") ||
+      msg.includes("取消")
+    ) {
+      encStatus.textContent = "⏹ 下载已取消";
+      encStatus.className = "status";
+    } else {
+      encStatus.textContent = "❌ " + msg;
+      encStatus.className = "status err";
+    }
     hp(encProg, encBar);
   }
 }
@@ -408,6 +571,7 @@ encBtn.addEventListener("click", doEnc);
 // ═══════════════════════════════════════ 解码 ══
 
 let df = null,
+  decMeta = null,
   dd = 0;
 decDrop.addEventListener("dragenter", (e) => {
   e.preventDefault();
@@ -438,6 +602,7 @@ decInput.addEventListener("change", function () {
     decHint.textContent = fmt(df.size) + " · BMP";
     decBtn.disabled = !1;
     decResult.classList.remove("show");
+    decMeta = null;
   } else {
     df = null;
     decText.textContent = "拖放图片，或点击选择";
@@ -447,6 +612,7 @@ decInput.addEventListener("change", function () {
 });
 decClearBtn.addEventListener("click", () => {
   df = null;
+  decMeta = null;
   decInput.value = "";
   decText.textContent = "拖放图片，或点击选择";
   decHint.textContent = "通过文件头自动识别";
@@ -459,14 +625,14 @@ decClearBtn.addEventListener("click", () => {
 async function doDec() {
   if (!df) return;
   const t0 = performance.now();
-  decStatus.textContent = "⏳ 读取…";
+  decStatus.textContent = "⏳ 读取元信息…";
   decStatus.className = "status";
   sp(decProg, decBar, 10);
   try {
-    const ab = await df.arrayBuffer();
-    sp(decProg, decBar, 30);
-    const m = bmpMeta(ab);
-    const { ent, pl, ds } = decMeta(m);
+    const m = await readBmpHeader(df);
+    sp(decProg, decBar, 20);
+    const { ent, payloadSize, ds } = await decMetaStream(m);
+    decMeta = { m, ent, payloadSize, ds };
     sp(decProg, decBar, 80);
     let h = "";
     for (let i = 0; i < ent.length; i++) {
@@ -488,7 +654,7 @@ async function doDec() {
       "✅ " +
       ent.length +
       " 个文件 · " +
-      fmt(pl) +
+      fmt(payloadSize) +
       " · " +
       ((performance.now() - t0) / 1e3).toFixed(1) +
       "s";
@@ -496,30 +662,39 @@ async function doDec() {
     sp(decProg, decBar, 100);
     setTimeout(() => hp(decProg, decBar), 1500);
     toast("✅ 解码成功");
+
     decFiles.querySelectorAll(".dl-btn").forEach((b) => {
-      b.addEventListener("click", function () {
+      b.addEventListener("click", async function () {
         const i = +this.dataset.idx,
           fn = this.dataset.fn;
-        let p = 0;
-        for (let j = 0; j < i; j++) p += ent[j].size;
+        const { m, ent, ds } = decMeta;
+        let prev = 0;
+        for (let j = 0; j < i; j++) prev += ent[j].size;
         try {
-          const d = extFile(m, ds, p, ent[i].size),
-            bl = new Blob([d]),
-            u = URL.createObjectURL(bl),
-            a = document.createElement("a");
-          a.href = u;
-          a.download = fn;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(u);
+          const fileStream = streamSaver.createWriteStream(fn);
+          const writer = fileStream.getWriter();
+          const chunkSize = (parseInt(chunkSizeInput.value) || 64) * 1024;
+          const offset = ds + prev;
+          const size = ent[i].size;
+          let remaining = size,
+            pos = offset;
+          while (remaining > 0) {
+            const take = Math.min(remaining, chunkSize);
+            const data = await readPayload(m, pos, take);
+            await writer.write(data);
+            remaining -= take;
+            pos += take;
+          }
+          await writer.close().catch(() => {});
           toast("⬇️ " + fn + " · " + fmt(ent[i].size));
         } catch (e) {
-          toast("❌ 提取失败: " + e.message);
+          console.error(e);
+          toast("⏹ 下载已取消");
         }
       });
     });
   } catch (e) {
+    console.error(e);
     decStatus.textContent = "❌ " + e.message;
     decStatus.className = "status err";
     hp(decProg, decBar);

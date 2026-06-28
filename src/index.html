@@ -8,14 +8,44 @@
   <body>
     <div class="c">
       <h1>📦 F2P <small>Files to Picture</small></h1>
-      <div class="sub">文件直写 BMP 像素，无压缩无打包，纯隐写。</div>
+      <div class="sub">打包隐写不压缩，文件直写 BMP 像素。</div>
 
       <div class="toast-container" id="toastContainer"></div>
 
-      <div class="grid">
-        <!-- ═══ 编码 ═══ -->
+      <div class="top-bar">
+        <div class="mode-tabs">
+          <button class="mode-btn active" data-mode="enc" id="tabEnc">
+            🔒 编码
+          </button>
+          <button class="mode-btn" data-mode="dec" id="tabDec">🔓 解码</button>
+        </div>
+        <div class="chunk-select">
+          <label>读取分块</label>
+          <select id="chunkSize">
+            <option value="1">1 KB</option>
+            <option value="2">2 KB</option>
+            <option value="4">4 KB</option>
+            <option value="8">8 KB</option>
+            <option value="16">16 KB</option>
+            <option value="32">32 KB</option>
+            <option value="64" selected>64 KB</option>
+            <option value="128">128 KB</option>
+            <option value="256">256 KB</option>
+            <option value="512">512 KB</option>
+            <option value="1024">1 MB</option>
+            <option value="2048">2 MB</option>
+            <option value="4096">4 MB</option>
+            <option value="8192">8 MB</option>
+            <option value="16384">16 MB</option>
+            <option value="32768">32 MB</option>
+            <option value="65536">64 MB</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- ═══ 编码 ═══ -->
+      <div id="encSection" class="section">
         <div class="card">
-          <h2>🔒 编码</h2>
           <label>📂 选择文件</label>
           <div class="drop-zone" id="encDrop">
             <input type="file" id="encInput" multiple />
@@ -41,10 +71,11 @@
             </div>
           </div>
         </div>
+      </div>
 
-        <!-- ═══ 解码 ═══ -->
+      <!-- ═══ 解码 ═══ -->
+      <div id="decSection" class="section" style="display: none">
         <div class="card">
-          <h2>🔓 解码</h2>
           <label>📤 上传隐写图片</label>
           <div class="drop-zone" id="decDrop">
             <input type="file" id="decInput" />

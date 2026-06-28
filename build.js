@@ -49,7 +49,30 @@ async function main() {
 
   fs.writeFileSync(htmlPath, htmlMin, "utf8");
 
-  // ── 3. 报告 ──
+  // ── mitm 产物压缩 ──
+  const mitmPath = path.join(dist, "mitm.html");
+  const mitmSrc = fs.readFileSync(mitmPath, "utf8");
+  const mitmMin = await minHTML(mitmSrc, {
+    collapseWhitespace: true,
+    removeComments: true,
+    minifyCSS: true,
+    minifyJS: true,
+    removeAttributeQuotes: true,
+    collapseBooleanAttributes: true,
+    removeRedundantAttributes: true,
+    removeEmptyAttributes: true,
+  });
+  fs.writeFileSync(mitmPath, mitmMin, "utf8");
+
+  const swPath = path.join(dist, "sw.js");
+  let swSrc = fs.readFileSync(swPath, "utf8");
+  swSrc = swSrc
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "")
+    .replace(/\n\s*\n/g, "\n");
+  fs.writeFileSync(swPath, swSrc, "utf8");
+
+  // ── 4. 报告 ──
   for (const a of info.assets || []) {
     const label = a.emitted ? "→" : "  ";
     console.log(`  ${label} ${a.name}  (${(a.size / 1024).toFixed(1)} KB)`);
