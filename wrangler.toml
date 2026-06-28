@@ -1,4 +1,3 @@
-name = "files2picture"
-compatibility_date = "2026-06-28"
-
+name = 'f2p'
 pages_build_output_dir = "out"
+compatibility_date = "2026-06-28"
