@@ -107,6 +107,14 @@ async function main() {
   const outPath = path.join(outDir, "index.html");
   fs.writeFileSync(outPath, htmlMin, "utf8");
   console.log(`  → ${outPath}`);
+
+  // ── 6. 复制 favicon ──
+  const srcIcon = path.join(srcDir, "favicon.png");
+  if (fs.existsSync(srcIcon)) {
+    const dstIcon = path.join(outDir, "favicon.png");
+    fs.copyFileSync(srcIcon, dstIcon);
+    console.log(`  → ${dstIcon}`);
+  }
 }
 
 main().catch((e) => {
