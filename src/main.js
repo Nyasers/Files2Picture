@@ -438,7 +438,7 @@ decInput.addEventListener("change", function () {
     decResult.classList.remove("show");
   } else {
     df = null;
-    decText.textContent = "拖放文件，或点击选择";
+    decText.textContent = "拖放图片，或点击选择";
     decHint.textContent = "通过文件头自动识别";
     decBtn.disabled = !0;
   }
@@ -446,8 +446,8 @@ decInput.addEventListener("change", function () {
 decClearBtn.addEventListener("click", () => {
   df = null;
   decInput.value = "";
-  decText.textContent = "拖放 BMP，或点击选择";
-  decHint.textContent = "仅支持 BMP 格式";
+  decText.textContent = "拖放图片，或点击选择";
+  decHint.textContent = "通过文件头自动识别";
   decBtn.disabled = !0;
   decResult.classList.remove("show");
   decStatus.textContent = "等待图片上传…";
