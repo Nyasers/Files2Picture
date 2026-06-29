@@ -310,31 +310,48 @@ async function readBmpHeader(blob) {
   return { w, h, rb: st + rp, po, blob };
 }
 
-// 按行读取 payload 字节 (局部缓存)
+// 按行读取 payload 字节
+// 一次性读出所有需要的行到内存，避免移动端浏览器多次 Blob.slice 的数据损坏
 async function readPayload(m, bp, len) {
   const chMap = [2, 1, 0];
   const out = new Uint8Array(len);
-  let off = 0;
+  if (len === 0) return out;
   const { w, po, rb, blob } = m;
-  let cacheIdx = -1,
-    cacheRow = null;
-  while (off < len) {
-    const pxIdx = ((bp + off) / 3) | 0;
-    const row = (pxIdx / w) | 0;
-    const maxInRow = (w - (pxIdx % w)) * 3;
-    const want = Math.min(len - off, maxInRow);
-    if (cacheIdx !== row) {
-      cacheRow = new Uint8Array(
-        await blob.slice(po + row * rb, po + (row + 1) * rb).arrayBuffer(),
-      );
-      cacheIdx = row;
+
+  // 计算需要哪些行
+  const pxStart = (bp / 3) | 0;
+  const pxEnd = ((bp + len - 1) / 3) | 0;
+  const rowStart = (pxStart / w) | 0;
+  const rowEnd = (pxEnd / w) | 0;
+
+  // 一次读出所有行（一次 Blob.slice 调用）
+  const fileStart = po + rowStart * rb;
+  const fileEnd = po + (rowEnd + 1) * rb;
+
+  let buf;
+  try {
+    const ab = await blob.slice(fileStart, fileEnd).arrayBuffer();
+    buf = new Uint8Array(ab);
+  } catch {
+    // arrayBuffer 失败，降级到 FileReader
+    try {
+      buf = await readSlice(blob, fileStart, fileEnd);
+    } catch {
+      throw new Error("读取 BMP 像素数据失败");
     }
-    for (let j = 0; j < want; j++) {
-      const pIdx = ((bp + off + j) / 3) | 0;
-      out[off + j] = cacheRow[(pIdx % w) * 3 + chMap[(bp + off + j) % 3]];
-    }
-    off += want;
   }
+
+  // 从内存 buffer 按像素寻址提取字节
+  for (let off = 0; off < len; off++) {
+    const pOff = bp + off;
+    const pxIdx = (pOff / 3) | 0;
+    const row = (pxIdx / w) | 0;
+    const relRow = row - rowStart;
+    const pInRow = pxIdx % w;
+    const bufOff = relRow * rb + pInRow * 3 + chMap[pOff % 3];
+    out[off] = buf[bufOff];
+  }
+
   return out;
 }
 
