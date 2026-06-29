@@ -231,6 +231,40 @@ label {
   gap: 8px;
   margin-top: 12px;
 }
+.enc-pwd {
+  margin-top: 10px;
+}
+.pwd-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: #1a1a1a;
+  color: #ddd;
+  font-size: 0.85rem;
+  margin-bottom: 6px;
+  outline: none;
+}
+.pwd-input:focus {
+  border-color: #4a4aff;
+}
+.pwd-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: #aaa;
+  cursor: pointer;
+  margin-top: 4px;
+}
+.pwd-toggle input[type="checkbox"] {
+  accent-color: #4a4aff;
+}
+.dec-pwd {
+  margin-top: 10px;
+}
 .btn {
   flex: 1;
   background: #4a4aff;

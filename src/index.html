@@ -56,9 +56,19 @@
           <div class="file-list" id="fileList" style="display: none"></div>
           <div class="btn-group">
             <button class="btn" id="encBtn" disabled>🎨 生成图片</button>
-            <button class="btn-ghost" id="clearBtn" style="display: none">
-              ✕ 清空
-            </button>
+            <button class="btn-ghost" id="clearBtn">✕ 清空</button>
+          </div>
+          <div class="enc-pwd" id="encPwdArea">
+            <input
+              type="text"
+              id="encPwdInput"
+              class="pwd-input"
+              placeholder="输入密码（留空以空字符串加密）"
+            />
+            <label class="pwd-toggle"
+              ><input type="checkbox" id="encNameEncCb" /> 🔒
+              同时加密文件名</label
+            >
           </div>
           <div class="progress-wrap" id="encProg">
             <div class="progress-bar" id="encBar"></div>
@@ -86,6 +96,14 @@
           <div class="btn-group">
             <button class="btn" id="decBtn" disabled>🔎 提取</button>
             <button class="btn-ghost" id="decClearBtn">✕ 清空</button>
+          </div>
+          <div class="dec-pwd" id="decPwdArea">
+            <input
+              type="text"
+              id="decPwdInput"
+              class="pwd-input"
+              placeholder="输入密码（留空用空字符串解密）"
+            />
           </div>
           <div class="progress-wrap" id="decProg">
             <div class="progress-bar" id="decBar"></div>

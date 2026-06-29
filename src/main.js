@@ -35,7 +35,11 @@ const tc = $("toastContainer"),
   tabEnc = $("tabEnc"),
   tabDec = $("tabDec"),
   encSection = $("encSection"),
-  decSection = $("decSection");
+  decSection = $("decSection"),
+  encPwdInput = $("encPwdInput"),
+  encNameEncCb = $("encNameEncCb"),
+  decPwdInput = $("decPwdInput"),
+  decPwdArea = $("decPwdArea");
 
 tabEnc.addEventListener("click", () => {
   tabEnc.classList.add("active");
@@ -103,10 +107,58 @@ async function readChunk(file, start, end, trySize) {
   }
 }
 
+// ═══════════════════════════════════════ 加密工具 ══
+
+async function deriveEncKey(password, salt, iterations) {
+  const pwdKey = await crypto.subtle.importKey(
+    "raw",
+    TE.encode(password || ""),
+    "PBKDF2",
+    false,
+    ["deriveKey"],
+  );
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations: iterations || 10000, hash: "SHA-256" },
+    pwdKey,
+    { name: "AES-CTR", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+function buildCtr(nonce, blockOff) {
+  const ctr = new Uint8Array(16);
+  ctr.set(nonce, 0);
+  const v = blockOff >>> 0;
+  ctr[12] = (v >>> 24) & 0xff;
+  ctr[13] = (v >>> 16) & 0xff;
+  ctr[14] = (v >>> 8) & 0xff;
+  ctr[15] = v & 0xff;
+  return ctr;
+}
+
+async function aesEncrypt(plain, key, nonce, blockOff) {
+  const algo = {
+    name: "AES-CTR",
+    counter: buildCtr(nonce, blockOff),
+    length: 32,
+  };
+  return new Uint8Array(await crypto.subtle.encrypt(algo, key, plain));
+}
+
+async function aesDecrypt(data, key, nonce, blockOff) {
+  const algo = {
+    name: "AES-CTR",
+    counter: buildCtr(nonce, blockOff),
+    length: 32,
+  };
+  return new Uint8Array(await crypto.subtle.decrypt(algo, key, data));
+}
+
 // ═══════════════════════════════════════ 流式 BMP 编码 ══
 
 function buildBMPStream(payloadSize, onRow) {
-  const ps = 8 + payloadSize; // 4 = marker + 2 = fc
+  const ps = 8 + payloadSize; // 4B marker + 4B fc
   const np = Math.ceil(ps / 3);
   const sz = Math.max(4, Math.ceil(Math.sqrt(np)));
   const w = sz,
@@ -138,7 +190,8 @@ function buildBMPStream(payloadSize, onRow) {
   v.setUint32(50, 0, true);
 
   let rowBuf = new Uint8Array(rb);
-  let col = 0;
+  let col = 0,
+    rowIdx = 0;
   let bp = 0;
   let headBuf = [];
   const ch = [2, 1, 0];
@@ -151,6 +204,7 @@ function buildBMPStream(payloadSize, onRow) {
     }
     rowBuf = new Uint8Array(rb);
     col = 0;
+    rowIdx++;
   }
 
   // pad 完成后等待所有写入完成
@@ -161,6 +215,8 @@ function buildBMPStream(payloadSize, onRow) {
   return {
     w,
     h,
+    pds,
+    fs,
     header: new Uint8Array(hdr),
     get headBytes() {
       return new Uint8Array(headBuf);
@@ -223,6 +279,13 @@ function buildBMPStream(payloadSize, onRow) {
       if (col > 0 && onRow) {
         const copy = new Uint8Array(rowBuf);
         writeChain = writeChain.then(() => onRow(copy));
+        rowIdx++;
+      }
+      // flush 剩余空行保持 BMP 文件完整性
+      while (rowIdx < h && onRow) {
+        const copy = new Uint8Array(rb);
+        writeChain = writeChain.then(() => onRow(copy));
+        rowIdx++;
       }
     },
     flushAll() {
@@ -276,20 +339,24 @@ async function readPayload(m, bp, len) {
 }
 
 // 解析 payload 元信息
-async function decMetaStream(m) {
-  const hdr = await readPayload(m, 0, 8);
-  const marker = (hdr[0] << 24) | (hdr[1] << 16) | (hdr[2] << 8) | hdr[3];
-  const newFmt = marker === 0x46325031; // "F2P1"
-  const fc = newFmt
-    ? ((hdr[4] << 24) | (hdr[5] << 16) | (hdr[6] << 8) | hdr[7]) >>> 0
-    : (hdr[4] << 8) | hdr[5];
-
-  const ms = newFmt ? 8 : 6;
+// 旧格式：decMetaStream(m, fc, 0, null, 6)
+// 新格式：decMetaStream(m, fc, flags, key, 33)
+async function decMetaStream(m, fc, flags, key, ms) {
+  const newFmt = ms > 6; // 旧 ms=6, F2P1 ms=8, F2P2+ ms=33
+  const encNameEnc = newFmt && flags & 1;
+  const hasNonces = ms >= 29; // 有 magic+ salt+iter 就有 nonce
+  // entry: 2(nameLen) + name + size + [12(nonceData)] + [12(nonceName)]
+  const entryMin = hasNonces
+    ? 2 + 8 + 12 + (encNameEnc ? 12 : 0)
+    : newFmt
+      ? 2 + 8
+      : 2 + 4;
   let buf = await readPayload(m, ms, 65536);
   let off = 0;
   const ent = [];
+
   for (let i = 0; i < fc; i++) {
-    while (off + (newFmt ? 10 : 6) > buf.length) {
+    while (off + entryMin > buf.length) {
       const more = await readPayload(m, ms + buf.length, 65536);
       if (buf.length >= 0x10000000) throw Error("元信息过大");
       const mg = new Uint8Array(buf.length + more.length);
@@ -299,10 +366,13 @@ async function decMetaStream(m) {
     }
     const nl = (buf[off] << 8) | buf[off + 1];
     off += 2;
-    const nm = TD.decode(buf.subarray(off, off + nl));
-    off += nl;
-    let dl;
-    if (newFmt) {
+
+    let nm,
+      dl,
+      nonceData = null;
+    if (encNameEnc) {
+      const encName = buf.subarray(off, off + nl);
+      off += nl;
       const hi =
         (buf[off] << 24) |
         (buf[off + 1] << 16) |
@@ -315,20 +385,74 @@ async function decMetaStream(m) {
         buf[off + 7];
       dl = hi * 0x100000000 + (lo >>> 0);
       off += 8;
+      const nonceName = buf.subarray(off, off + 12);
+      off += 12;
+      const ctr = new Uint8Array(16);
+      ctr.set(nonceName, 0);
+      const decName = await crypto.subtle.decrypt(
+        { name: "AES-CTR", counter: ctr, length: 32 },
+        key,
+        encName,
+      );
+      nm = TD.decode(new Uint8Array(decName));
+      nonceData = buf.subarray(off, off + 12);
+      off += 12;
     } else {
-      dl =
-        ((buf[off] << 24) |
+      nm = TD.decode(buf.subarray(off, off + nl));
+      off += nl;
+      if (hasNonces) {
+        // F2P2: has nonces
+        const hi =
+          (buf[off] << 24) |
           (buf[off + 1] << 16) |
           (buf[off + 2] << 8) |
-          buf[off + 3]) >>>
-        0;
-      off += 4;
+          buf[off + 3];
+        const lo =
+          (buf[off + 4] << 24) |
+          (buf[off + 5] << 16) |
+          (buf[off + 6] << 8) |
+          buf[off + 7];
+        dl = hi * 0x100000000 + (lo >>> 0);
+        off += 8;
+        nonceData = buf.subarray(off, off + 12);
+        off += 12;
+      } else if (newFmt) {
+        // F2P1: 8B size, no nonces
+        const hi =
+          (buf[off] << 24) |
+          (buf[off + 1] << 16) |
+          (buf[off + 2] << 8) |
+          buf[off + 3];
+        const lo =
+          (buf[off + 4] << 24) |
+          (buf[off + 5] << 16) |
+          (buf[off + 6] << 8) |
+          buf[off + 7];
+        dl = hi * 0x100000000 + (lo >>> 0);
+        off += 8;
+      } else {
+        // 旧格式：4B size
+        dl =
+          ((buf[off] << 24) |
+            (buf[off + 1] << 16) |
+            (buf[off + 2] << 8) |
+            buf[off + 3]) >>>
+          0;
+        off += 4;
+      }
     }
-    ent.push({ name: nm, size: dl });
+
+    ent.push({
+      name: nm,
+      size: dl,
+      nonceData: nonceData ? new Uint8Array(nonceData) : null,
+    });
   }
-  const sizeField = newFmt ? 8 : 4;
+
+  const es = newFmt ? 8 : 4;
+  const no = hasNonces ? 12 + (encNameEnc ? 12 : 0) : 0;
   const payloadSize = ent.reduce(
-    (s, f) => s + 2 + TE.encode(f.name).length + sizeField + f.size,
+    (s, f) => s + 2 + TE.encode(f.name).length + es + no + f.size,
     0,
   );
   return { ent, payloadSize, m, ds: ms + off };
@@ -358,14 +482,12 @@ function rmF(i) {
 function updUI() {
   if (!sel.length) {
     fileList.style.display = "none";
-    clearBtn.style.display = "none";
     encBtn.disabled = !0;
     encStatus.textContent = "等待文件选择…";
     encStatus.className = "status";
     return;
   }
   const t = sel.reduce((s, f) => s + f.size, 0);
-  clearBtn.style.display = "inline-block";
   let e = "";
   for (let i = 0; i < sel.length; i++) {
     const n = sel[i];
@@ -453,43 +575,99 @@ async function doEnc() {
     encResult.classList.remove("show");
     dlLink.style.display = "";
     sp(encProg, encBar, 5);
-    let ms = 0,
+    const pwd = encPwdInput.value;
+    let flags = 0;
+    flags |= encNameEncCb.checked << 0;
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const encKey = await deriveEncKey(pwd, salt, 10000);
+    let ms = 33,
       ds = 0;
-    for (const f of sel)
-      ((ms += 2 + TE.encode(f.name).length + 8), (ds += f.size));
+    for (const f of sel) {
+      const nl = TE.encode(f.name).length;
+      ms += 2 + nl + 8 + 12 + (flags ? 12 : 0);
+      ds += f.size;
+    }
     sp(encProg, encBar, 15);
 
     const d = new Date();
-    const pad = n => String(n).padStart(2, '0');
-    const ts = d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + 'T' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
-    const fileStream = streamSaver.createWriteStream("F2P_" + ts + ".bmp");
-    const writer = fileStream.getWriter();
-    let cancelled = false;
-
+    const pad = (n) => String(n).padStart(2, "0");
+    const ts =
+      d.getFullYear() +
+      pad(d.getMonth() + 1) +
+      pad(d.getDate()) +
+      "T" +
+      pad(d.getHours()) +
+      pad(d.getMinutes()) +
+      pad(d.getSeconds());
     const bmp = buildBMPStream(ms + ds, (row) => {
         writer.write(row).catch(() => {
           cancelled = true;
         });
       }),
-      { w, h } = bmp;
+      { w, h, pds, fs } = bmp;
+
+    const fileStream = streamSaver.createWriteStream("F2P_" + ts + ".bmp", {
+      size: fs,
+    });
+    const writer = fileStream.getWriter();
+    let cancelled = false;
 
     await writer.write(bmp.header).catch(() => {
       cancelled = true;
     });
     if (cancelled) throw Error("下载已取消");
 
-    bmp.w32(0x46325031); // "F2P1" version=1
+    // ── 写入 header ──
+    bmp.w32(0x46325032); // "F2P2"
     bmp.w32(sel.length);
+    bmp.w8(flags);
+    bmp.wChunk(salt);
+    bmp.w32(10000);
+
+    // magic check: 加密版本号用于密码验证
+    const mV = 0x46325032;
+    const magicNonce = salt.subarray(0, 12);
+    const magicEnc = await aesEncrypt(
+      new Uint8Array([
+        (mV >>> 24) & 0xff,
+        (mV >>> 16) & 0xff,
+        (mV >>> 8) & 0xff,
+        mV & 0xff,
+      ]),
+      encKey,
+      magicNonce,
+      0,
+    );
+    bmp.wChunk(magicEnc);
+
+    // ── 写入 entries（生成 nonce 并加密文件名） ──
+    const fileNonces = [];
     for (const f of sel) {
+      const nonceData = crypto.getRandomValues(new Uint8Array(12));
       const nb = TE.encode(f.name);
-      bmp.w16(nb.length);
-      bmp.wChunk(nb);
-      bmp.w64(f.size);
+      if (flags) {
+        const nonceName = crypto.getRandomValues(new Uint8Array(12));
+        const encName = await aesEncrypt(nb, encKey, nonceName, 0);
+        bmp.w16(nb.length);
+        bmp.wChunk(encName);
+        bmp.w64(f.size);
+        bmp.wChunk(nonceName);
+        bmp.wChunk(nonceData);
+      } else {
+        bmp.w16(nb.length);
+        bmp.wChunk(nb);
+        bmp.w64(f.size);
+        bmp.wChunk(nonceData);
+      }
+      fileNonces.push(nonceData);
     }
 
+    // ── 读取 + 加密 + 写入文件数据 ──
     let processed = 0,
       fileIdx = 0;
-    for (const f of sel) {
+    for (let i = 0; i < sel.length; i++) {
+      const f = sel[i];
+      const nd = fileNonces[i];
       encStatus.innerHTML =
         "<span>⏳ (" +
         ++fileIdx +
@@ -509,7 +687,8 @@ async function doEnc() {
         while (pos < f.size) {
           const end = Math.min(pos + chunk, f.size);
           const buf = await readChunk(f, pos, end, chunk);
-          bmp.wChunk(buf);
+          const encBuf = await aesEncrypt(buf, encKey, nd, pos / 16);
+          bmp.wChunk(encBuf);
           pos = end;
         }
       } catch (e) {
@@ -605,6 +784,13 @@ decInput.addEventListener("change", function () {
     decBtn.disabled = !1;
     decResult.classList.remove("show");
     decMeta = null;
+    // 异步检测 F2P2，空密码能解密则直接显示
+    tryAutoDec().then((r) => {
+      if (r === "wrong_pwd") {
+        decStatus.textContent = "❌ 密码错误";
+        decStatus.className = "status err";
+      }
+    });
   } else {
     df = null;
     decText.textContent = "拖放图片，或点击选择";
@@ -612,6 +798,45 @@ decInput.addEventListener("change", function () {
     decBtn.disabled = !0;
   }
 });
+
+async function tryAutoDec() {
+  try {
+    const m = await readBmpHeader(df);
+    const hdr = await readPayload(m, 0, 8);
+    const marker = (hdr[0] << 24) | (hdr[1] << 16) | (hdr[2] << 8) | hdr[3];
+    if ((marker & 0xffffff00) !== 0x46325000 || (marker & 0xff) <= 1)
+      return false;
+    // ^ F2P2+ 才走加密路径
+    const fc = ((hdr[4] << 24) | (hdr[5] << 16) | (hdr[6] << 8) | hdr[7]) >>> 0;
+    const flagsHdr = await readPayload(m, 8, 1);
+    const flags = flagsHdr[0];
+    const salt = await readPayload(m, 9, 16);
+    const iterBytes = await readPayload(m, 25, 4);
+    const iter =
+      (iterBytes[0] << 24) |
+      (iterBytes[1] << 16) |
+      (iterBytes[2] << 8) |
+      iterBytes[3];
+    const key = await deriveEncKey(decPwdInput.value, salt, iter);
+    const magicNonce = salt.subarray(0, 12);
+    const magicEnc = await readPayload(m, 29, 4);
+    const magicDec = await aesDecrypt(magicEnc, key, magicNonce, 0);
+    if (
+      magicDec[0] !== ((marker >>> 24) & 0xff) ||
+      magicDec[1] !== ((marker >>> 16) & 0xff) ||
+      magicDec[2] !== ((marker >>> 8) & 0xff) ||
+      magicDec[3] !== (marker & 0xff)
+    )
+      return "wrong_pwd";
+    const { ent, payloadSize, ds } = await decMetaStream(m, fc, flags, key, 33);
+    decMeta = { m, ent, payloadSize, ds, key };
+    renderDecResult(ent, payloadSize);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 decClearBtn.addEventListener("click", () => {
   df = null;
   decMeta = null;
@@ -633,73 +858,153 @@ async function doDec() {
   try {
     const m = await readBmpHeader(df);
     sp(decProg, decBar, 20);
-    const { ent, payloadSize, ds } = await decMetaStream(m);
-    decMeta = { m, ent, payloadSize, ds };
-    sp(decProg, decBar, 80);
-    let h = "";
-    for (let i = 0; i < ent.length; i++) {
-      const f = ent[i];
-      h +=
-        '<div class="decode-file-item"><span class="name">📄 ' +
-        f.name +
-        '</span><span class="size">' +
-        fmt(f.size) +
-        '</span><button class="dl-btn" data-idx="' +
-        i +
-        '" data-fn="' +
-        f.name.replace(/"/g, "&quot;") +
-        '">⬇️</button></div>';
-    }
-    decFiles.innerHTML = h;
-    decResult.classList.add("show");
-    decStatus.textContent =
-      "✅ " +
-      ent.length +
-      " 个文件 · " +
-      fmt(payloadSize) +
-      " · " +
-      ((performance.now() - t0) / 1e3).toFixed(1) +
-      "s";
-    decStatus.className = "status ok";
-    sp(decProg, decBar, 100);
-    setTimeout(() => hp(decProg, decBar), 1500);
-    toast("✅ 解码成功");
 
-    decFiles.querySelectorAll(".dl-btn").forEach((b) => {
-      b.addEventListener("click", async function () {
-        const i = +this.dataset.idx,
-          fn = this.dataset.fn;
-        const { m, ent, ds } = decMeta;
-        let prev = 0;
-        for (let j = 0; j < i; j++) prev += ent[j].size;
-        try {
-          const fileStream = streamSaver.createWriteStream(fn);
-          const writer = fileStream.getWriter();
-          const chunkSize = (parseInt(chunkSizeInput.value) || 64) * 1024;
-          const offset = ds + prev;
-          const size = ent[i].size;
-          let remaining = size,
-            pos = offset;
-          while (remaining > 0) {
-            const take = Math.min(remaining, chunkSize);
-            const data = await readPayload(m, pos, take);
-            await writer.write(data);
-            remaining -= take;
-            pos += take;
-          }
-          await writer.close().catch(() => {});
-          toast("⬇️ " + fn + " · " + fmt(ent[i].size));
-        } catch (e) {
-          console.error(e);
-          toast("⏹ 下载已取消");
-        }
-      });
-    });
+    // 读 header 前 8 字节判断格式
+    const hdr = await readPayload(m, 0, 8);
+    const marker = (hdr[0] << 24) | (hdr[1] << 16) | (hdr[2] << 8) | hdr[3];
+    const isEncFmt =
+      (marker & 0xffffff00) === 0x46325000 && (marker & 0xff) > 1; // F2P2+
+    const isF2P1 = marker === 0x46325031; // "F2P1"（旧新版，无加密）
+
+    if (isF2P1) {
+      // F2P1：ms = 8，8B per-file size，4B fc，无加密
+      const fc =
+        ((hdr[4] << 24) | (hdr[5] << 16) | (hdr[6] << 8) | hdr[7]) >>> 0;
+      const { ent, payloadSize, ds } = await decMetaStream(m, fc, 0, null, 8);
+      decMeta = { m, ent, payloadSize, ds };
+      renderDecResult(ent, payloadSize, t0);
+      return;
+    }
+
+    if (isEncFmt) {
+      // F2P2：有 flags 字节
+      const flagsHdr = await readPayload(m, 8, 1);
+      const flags = flagsHdr[0];
+      const fc =
+        ((hdr[4] << 24) | (hdr[5] << 16) | (hdr[6] << 8) | hdr[7]) >>> 0;
+      const ms = 33;
+      const salt = await readPayload(m, 9, 16);
+      const iterBytes = await readPayload(m, 25, 4);
+      const iter =
+        (iterBytes[0] << 24) |
+        (iterBytes[1] << 16) |
+        (iterBytes[2] << 8) |
+        iterBytes[3];
+      const key = await deriveEncKey(decPwdInput.value, salt, iter);
+
+      // 验证密码（magic check：用 header 内的版本号）
+      const magicNonce = salt.subarray(0, 12);
+      const magicEnc = await readPayload(m, 29, 4);
+      const magicDec = await aesDecrypt(magicEnc, key, magicNonce, 0);
+      if (
+        magicDec[0] !== ((marker >>> 24) & 0xff) ||
+        magicDec[1] !== ((marker >>> 16) & 0xff) ||
+        magicDec[2] !== ((marker >>> 8) & 0xff) ||
+        magicDec[3] !== (marker & 0xff)
+      ) {
+        throw Error("密码错误");
+      }
+
+      const { ent, payloadSize, ds } = await decMetaStream(
+        m,
+        fc,
+        flags,
+        key,
+        ms,
+      );
+      decMeta = { m, ent, payloadSize, ds, key };
+      renderDecResult(ent, payloadSize, t0);
+      return;
+    }
+
+    // 旧格式：4B per-file size，2B fc，无加密
+    const fc = (hdr[4] << 8) | hdr[5];
+    const { ent, payloadSize, ds } = await decMetaStream(m, fc, 0, null, 6);
+    decMeta = { m, ent, payloadSize, ds };
+    renderDecResult(ent, payloadSize, t0);
   } catch (e) {
     console.error(e);
-    decStatus.textContent = "❌ " + e.message;
+    decStatus.textContent =
+      e.message.includes("decrypt") || e.message.includes("operation")
+        ? "❌ 密码错误"
+        : "❌ " + e.message;
     decStatus.className = "status err";
     hp(decProg, decBar);
   }
+}
+
+function renderDecResult(ent, payloadSize, t0) {
+  let h = "";
+  for (let i = 0; i < ent.length; i++) {
+    const f = ent[i];
+    h +=
+      '<div class="decode-file-item"><span class="name">📄 ' +
+      f.name +
+      '</span><span class="size">' +
+      fmt(f.size) +
+      '</span><button class="dl-btn" data-idx="' +
+      i +
+      '" data-fn="' +
+      f.name.replace(/"/g, "&quot;") +
+      '">⬇️</button></div>';
+  }
+  decFiles.innerHTML = h;
+  decResult.classList.add("show");
+  decStatus.textContent =
+    "✅ " +
+    ent.length +
+    " 个文件 · " +
+    fmt(payloadSize) +
+    " · " +
+    ((performance.now() - (t0 || performance.now())) / 1e3).toFixed(1) +
+    "s";
+  decStatus.className = "status ok";
+  sp(decProg, decBar, 100);
+  setTimeout(() => hp(decProg, decBar), 1500);
+  toast("✅ 解码成功");
+
+  decFiles.querySelectorAll(".dl-btn").forEach((b) => {
+    b.addEventListener("click", async function () {
+      const i = +this.dataset.idx,
+        fn = this.dataset.fn;
+      const { m, ent, ds, key } = decMeta;
+      let prev = 0;
+      for (let j = 0; j < i; j++) prev += ent[j].size;
+      const nd = ent[i].nonceData;
+      try {
+        const fileStream = streamSaver.createWriteStream(fn, {
+          size: ent[i].size,
+        });
+        const writer = fileStream.getWriter();
+        const chunkSize = (parseInt(chunkSizeInput.value) || 64) * 1024;
+        const offset = ds + prev;
+        const size = ent[i].size;
+        let remaining = size,
+          pos = offset;
+        while (remaining > 0) {
+          const take = Math.min(remaining, chunkSize);
+          const data = await readPayload(m, pos, take);
+          if (key) {
+            const decData = await aesDecrypt(
+              data,
+              key,
+              nd,
+              (pos - offset) / 16,
+            );
+            await writer.write(decData);
+          } else {
+            await writer.write(data);
+          }
+          remaining -= take;
+          pos += take;
+        }
+        await writer.close().catch(() => {});
+        toast("⬇️ " + fn + " · " + fmt(ent[i].size));
+      } catch (e) {
+        console.error(e);
+        toast("⏹ 下载已取消");
+      }
+    });
+  });
 }
 decBtn.addEventListener("click", doDec);
