@@ -147,9 +147,6 @@ export function buildBMPStream(payloadSize, onRow) {
     pds,
     fs,
     header: new Uint8Array(hdr),
-    get headBytes() {
-      return new Uint8Array(headBuf);
-    },
     wChunk(arr) {
       let i = 0,
         n = arr.length;
@@ -379,5 +376,11 @@ export async function decMetaStream(m, fc, flags, key, ms) {
     (s, f) => s + 2 + _ctx.e.encode(f.name).length + es + no + f.size,
     0,
   );
+  // 填入每个文件在 BMP 像素数据中的偏移
+  let accOff = ms + off;
+  for (const e of ent) {
+    e.offset = accOff;
+    accOff += e.size;
+  }
   return { ent, payloadSize, m, ds: ms + off };
 }

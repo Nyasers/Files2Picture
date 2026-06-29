@@ -33,7 +33,16 @@ const encInput = $("encInput"),
   encBtn = $("encBtn"),
   clearBtn = $("clearBtn");
 const encPwdInput = $("encPwdInput"),
-  encNameEncCb = $("encNameEncCb");
+  encNameBubble = $("encNameBubble");
+
+// 加密文件名气泡开关
+let nameEncEnabled = true;
+encNameBubble.classList.add("on");
+encNameBubble.addEventListener("click", () => {
+  nameEncEnabled = !nameEncEnabled;
+  encNameBubble.classList.toggle("on", nameEncEnabled);
+  encNameBubble.innerHTML = nameEncEnabled ? "🔒 加密文件名" : "🔓 加密文件名";
+});
 
 // 解码
 const decInput = $("decInput"),
@@ -128,6 +137,49 @@ function initSW() {
   });
 }
 
+function postViaIframe(url, fields) {
+  const id =
+    "dlf_" + (Date.now() + "_" + Math.random().toString(36).slice(2, 8));
+  const f = document.createElement("iframe");
+  f.id = id;
+  f.name = id;
+  f.style.display = "none";
+  document.body.appendChild(f);
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = url;
+  form.target = id;
+  form.style.display = "none";
+  for (const [n, v] of Object.entries(fields)) {
+    const el = document.createElement("input");
+    el.type = "hidden";
+    el.name = n;
+    el.value = v;
+    form.appendChild(el);
+  }
+  document.body.appendChild(form);
+  form.submit();
+  form.remove();
+  // 延迟自毁，等浏览器完成导航
+  setTimeout(() => f.remove(), 1000);
+}
+
+function waitForSw() {
+  if (swController) return Promise.resolve();
+  return new Promise((resolve) => {
+    const check = () => {
+      if (swController) resolve();
+      else setTimeout(check, 20);
+    };
+    // 也监听 ready 事件
+    navigator.serviceWorker.ready.then(() => {
+      swController = navigator.serviceWorker.controller;
+      resolve();
+    });
+    check();
+  });
+}
+
 navigator.serviceWorker.addEventListener("message", (event) => {
   const msg = event.data;
   if (!msg || !msg.type) return;
@@ -149,9 +201,6 @@ navigator.serviceWorker.addEventListener("message", (event) => {
       break;
     case "jobs-list":
       for (const j of msg.jobs) handleJobSync(j);
-      break;
-    case "job-data":
-      handleJobData(msg);
       break;
   }
 });
@@ -237,7 +286,10 @@ encDrop.addEventListener("dragenter", (e) => {
 encDrop.addEventListener("dragover", (e) => e.preventDefault());
 encDrop.addEventListener("dragleave", (e) => {
   ed--;
-  if (!ed) encDrop.classList.remove("drag-over");
+  if (ed <= 0) {
+    ed = 0;
+    encDrop.classList.remove("drag-over");
+  }
 });
 encDrop.addEventListener("drop", (e) => {
   e.preventDefault();
@@ -255,13 +307,14 @@ encDrop.addEventListener("drop", (e) => {
 
 // ── 提交编码任务 ──
 
-encBtn.addEventListener("click", () => {
+encBtn.addEventListener("click", async () => {
   if (!sel.length) return;
+  await waitForSw();
   const password = encPwdInput.value;
-  const nameEnc = encNameEncCb.checked;
+  const nameEnc = nameEncEnabled;
   const chunkSize = parseInt(chunkSizeInput.value) || 64;
   const files = sel.slice();
-  const jobId = "e" + Date.now();
+  const jobId = Date.now() + "";
 
   // 页面预计算 BMP 总尺寸，带上 Content-Length
   const flags = nameEnc ? 1 : 0;
@@ -278,24 +331,40 @@ encBtn.addEventListener("click", () => {
   const rp = (4 - (st % 4)) % 4;
   const rb = st + rp;
   const fs = 54 + rb * sz;
-  const fn =
-    "F2P_" +
-    new Date().toISOString().replace(/[:.]/g, "").slice(0, 15) +
-    ".bmp";
+  const fn = "F2P_" + jobId + ".bmp";
 
-  // 先踢一脚流式下载（iframe 避免页面导航）
-  const ifr = document.createElement("iframe");
-  ifr.style.display = "none";
-  ifr.src =
-    "/f2p-dl-stream/" +
-    jobId +
-    "?size=" +
-    fs +
-    "&name=" +
-    encodeURIComponent(fn);
-  document.body.appendChild(ifr);
+  // 先预注册编码流，等 SW 确认后再踢表单（跟解码路径一样）
+  swController.postMessage({
+    type: "encode-stream-prepare",
+    jobId,
+    filename: fn,
+    size: fs,
+  });
 
-  // 再下发任务
+  const ready = await new Promise((resolve) => {
+    const handler = (e) => {
+      const d = e.data;
+      if (d.jobId === jobId && d.type === "encode-stream-ready") {
+        navigator.serviceWorker.removeEventListener("message", handler);
+        resolve(d);
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", handler);
+    setTimeout(() => {
+      navigator.serviceWorker.removeEventListener("message", handler);
+      resolve(null);
+    }, 5000);
+  });
+
+  if (!ready) {
+    toast("⚠️ 编码流准备超时");
+    return;
+  }
+
+  // 踢表单 POST /dl
+  postViaIframe("/dl", { job: "enc", type: "stream", id: jobId });
+
+  // 再下发编码任务
   sendToSW({
     type: "encode",
     files,
@@ -328,7 +397,10 @@ decDrop.addEventListener("dragenter", (e) => {
 decDrop.addEventListener("dragover", (e) => e.preventDefault());
 decDrop.addEventListener("dragleave", (e) => {
   dd--;
-  if (!dd) decDrop.classList.remove("drag-over");
+  if (dd <= 0) {
+    dd = 0;
+    decDrop.classList.remove("drag-over");
+  }
 });
 decDrop.addEventListener("drop", (e) => {
   e.preventDefault();
@@ -371,7 +443,7 @@ async function quickDetect(file) {
     const marker = (hdr[0] << 24) | (hdr[1] << 16) | (hdr[2] << 8) | hdr[3];
     if (marker === 0x46325032) return "F2P2";
     if (marker === 0x46325031) return "F2P1";
-    if ((hdr[0] << 8) | (hdr[1] > 0)) return "旧格式";
+    if (((hdr[0] << 8) | hdr[1]) > 0) return "旧格式";
     return "未知格式";
   } catch {
     return null;
@@ -445,6 +517,7 @@ decBtn.addEventListener("click", async () => {
     decBmpMeta = m;
     decDataStart = ds;
     renderDecFiles(ent);
+    toast("✅ 解码完成，共 " + ent.length + " 个文件");
   } catch (e) {
     toast("❌ " + (e.message || "解析失败"));
     decBtn.disabled = !1;
@@ -454,28 +527,114 @@ decBtn.addEventListener("click", async () => {
 
 function renderDecFiles(ent) {
   let h =
-    '<div style="font-size:0.8rem;color:#888;margin-bottom:6px">共 ' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:0.8rem;color:#888">共 ' +
     ent.length +
-    " 个文件</div>";
+    " 个文件</span>" +
+    '<button class="btn-batch-dl" id="batchDlBtn">📥 下载选中</button></div>' +
+    '<div class="file-list-select-all"><label><input type="checkbox" id="selectAllDec" checked> 全选</label></div>';
   for (let i = 0; i < ent.length; i++) {
     const f = ent[i];
-    const jobId = "d" + Date.now() + "_" + i;
     h +=
-      '<div class="decode-file-item"><span class="name">📄 ' +
+      '<div class="decode-file-item"><input type="checkbox" class="dec-file-cb" data-idx="' +
+      i +
+      '" checked>' +
+      '<span class="name">📄 ' +
       f.name +
       '</span><span class="size">' +
       fmt(f.size) +
       '</span><button class="dl-btn" data-idx="' +
       i +
-      '" data-job="' +
-      jobId +
       '">⬇️</button></div>';
   }
   decFileList.innerHTML = h;
   decFileList.style.display = "block";
   decBtn.textContent = "✅ 已提取";
 
-  // 点下载按钮时在页面直接提取 + 下载
+  // 全选
+  document
+    .getElementById("selectAllDec")
+    .addEventListener("change", function () {
+      document
+        .querySelectorAll(".dec-file-cb")
+        .forEach((cb) => (cb.checked = this.checked));
+    });
+
+  // 批量下载
+  document
+    .getElementById("batchDlBtn")
+    .addEventListener("click", async function () {
+      const indices = [];
+      document
+        .querySelectorAll(".dec-file-cb:checked")
+        .forEach((cb) => indices.push(parseInt(cb.dataset.idx)));
+      if (!indices.length) {
+        toast("⚠️ 请选择文件");
+        return;
+      }
+      this.disabled = true;
+      this.textContent = "⏳ 准备中…";
+      try {
+        await waitForSw();
+        let rawKey = null;
+        if (decKey) rawKey = await crypto.subtle.exportKey("raw", decKey);
+        const rawKeyArr = rawKey ? Array.from(new Uint8Array(rawKey)) : null;
+        const chunkSize = parseInt(chunkSizeInput.value) || 64;
+
+        // 一次性预注册全部文件到 SW
+        const files = indices.map((idx) => ({
+          offset: decEntries[idx].offset,
+          size: decEntries[idx].size,
+          nonce: decEntries[idx].nonceData
+            ? Array.from(decEntries[idx].nonceData)
+            : null,
+          name: decEntries[idx].name,
+        }));
+        const gid = Date.now() + "";
+
+        swController.postMessage({
+          type: "decode-group",
+          id: gid,
+          files,
+          bmpFile: decFile,
+          keyRaw: rawKeyArr,
+          chunkSize,
+        });
+
+        const groupReady = await new Promise((resolve) => {
+          const handler = (e) => {
+            const d = e.data;
+            if (d.type === "decode-group-ready" && d.id === gid) {
+              navigator.serviceWorker.removeEventListener("message", handler);
+              resolve(d);
+            }
+            if (d.type === "decode-group-error" && d.id === gid) {
+              navigator.serviceWorker.removeEventListener("message", handler);
+              resolve(d);
+            }
+          };
+          navigator.serviceWorker.addEventListener("message", handler);
+          setTimeout(() => {
+            navigator.serviceWorker.removeEventListener("message", handler);
+            resolve(null);
+          }, 5000);
+        });
+
+        if (!groupReady || groupReady.type === "decode-group-error") {
+          throw Error(groupReady?.error || "分组准备失败");
+        }
+
+        // 每文件一个独立 iframe，同时投递
+        for (let i = 0; i < files.length; i++) {
+          postViaIframe("/dl", { job: "dec", type: "stream", id: gid, idx: i });
+        }
+      } catch (e) {
+        toast("❌ " + (e.message || "批量下载失败"));
+      }
+      this.disabled = false;
+      this.textContent = "📥 下载选中";
+    });
+
+  // 单个下载按钮
   decFileList.querySelectorAll(".dl-btn").forEach((a) => {
     a.addEventListener("click", async function () {
       const idx = parseInt(this.dataset.idx);
@@ -483,30 +642,49 @@ function renderDecFiles(ent) {
       this.disabled = true;
       this.textContent = "⏳";
       try {
-        const jobId = "d" + Date.now();
+        await waitForSw();
+        const jobId = Date.now() + "";
         let rawKey = null;
         if (decKey) rawKey = await crypto.subtle.exportKey("raw", decKey);
-        const fd = new FormData();
-        fd.append("bmp", decFile);
-        if (rawKey) fd.append("key", new Blob([rawKey]));
-        fd.append("offset", decDataStart);
-        fd.append("size", ent.size);
-        fd.append("nonce", new Blob([ent.nonceData]));
-        fd.append("name", ent.name);
 
-        const resp = await fetch("/f2p-dl/" + jobId, {
-          method: "POST",
-          body: fd,
+        // 发给 SW 预注册
+        swController.postMessage({
+          type: "decode-stream-prepare",
+          jobId,
+          bmpFile: decFile,
+          offset: ent.offset,
+          size: ent.size,
+          nonce: ent.nonceData ? Array.from(ent.nonceData) : null,
+          name: ent.name,
+          keyRaw: rawKey ? Array.from(new Uint8Array(rawKey)) : null,
+          chunkSize: parseInt(chunkSizeInput.value) || 64,
         });
-        if (!resp.ok) throw Error("服务错误");
-        const blob = await resp.blob();
-        const url = URL.createObjectURL(blob);
-        const dl = document.createElement("a");
-        dl.href = url;
-        dl.download = ent.name;
-        dl.click();
-        URL.revokeObjectURL(url);
-        toast("⬇️ " + ent.name);
+
+        // 等 SW 确认
+        const ready = await new Promise((resolve) => {
+          const handler = (e) => {
+            const d = e.data;
+            if (
+              d.jobId === jobId &&
+              (d.type === "decode-stream-ready" ||
+                d.type === "decode-stream-error")
+            ) {
+              navigator.serviceWorker.removeEventListener("message", handler);
+              resolve(d);
+            }
+          };
+          navigator.serviceWorker.addEventListener("message", handler);
+          setTimeout(() => {
+            navigator.serviceWorker.removeEventListener("message", handler);
+            resolve({ type: "decode-stream-error", error: "SW 响应超时" });
+          }, 5000);
+        });
+
+        if (ready.type === "decode-stream-error")
+          throw Error(ready.error || "准备失败");
+
+        // 表单 POST 触发流式下载
+        postViaIframe("/dl", { job: "dec", type: "stream", id: jobId });
       } catch (e) {
         toast("❌ " + (e.message || "提取失败"));
       }
@@ -519,100 +697,44 @@ function renderDecFiles(ent) {
 // ── 任务管理 ──
 
 function renderTasks() {
-  const entries = Array.from(jobHandlers.entries());
+  // 只显示进行中的任务
+  let entries = Array.from(jobHandlers.entries()).filter(
+    ([, j]) => j.status === "running",
+  );
   if (!entries.length) {
     tasksList.innerHTML =
       '<div style="text-align:center;color:#666;padding:20px">暂无任务</div>';
     return;
   }
+
+  // 按添加时间倒序（最新的在前）
+  entries.sort(([a], [b]) => b.localeCompare(a));
+
   let h = "";
   for (const [jobId, job] of entries) {
-    const isRunning = job.status === "running";
-    const isDone = job.status === "done";
-    const isError = job.status === "error";
-    const isCancelled = job.status === "cancelled";
     const pct = job.progress || 0;
 
     h += '<div class="task-item">';
     h +=
       '<div class="task-header"><span class="task-kind">' +
       (job.kind === "encode" ? "🔒 编码" : "🔓 解码") +
-      "</span>" +
-      '<span class="task-status ' +
-      (isDone ? "ok" : isError ? "err" : isCancelled ? "err" : "") +
-      '">' +
-      (isRunning ? "运行中…" : isDone ? "完成" : isError ? "失败" : "已取消") +
-      "</span></div>";
+      '</span><span class="task-status">\u8fd0\u884c\u4e2d\u2026</span></div>';
 
     if (job.label) h += '<div class="task-label">' + job.label + "</div>";
     if (job.currentFile)
       h += '<div class="task-file">' + job.currentFile + "</div>";
 
-    if (isRunning && job.kind === "encode") {
-      h +=
-        '<div class="tbar-wrap"><div class="tbar" style="width:' +
-        pct +
-        '%"></div></div>';
-      h +=
-        '<div class="task-pct">' +
-        pct +
-        '%</div><button class="btn-cancel" data-job="' +
-        jobId +
-        '">取消</button>';
-    }
-
-    if (isDone && job.kind === "encode") {
-      h +=
-        '<div class="task-actions"><span style="color:#5aff8a;font-size:0.85rem">✅ 已保存</span>' +
-        '<button class="btn-clear" data-job="' +
-        jobId +
-        '">✕</button></div>';
-    }
-
-    if (isDone && job.kind === "decode" && job.decodedFiles) {
-      h += '<div class="task-files">';
-      for (let i = 0; i < job.decodedFiles.length; i++) {
-        const f = job.decodedFiles[i];
-        h +=
-          '<div class="task-file-item"><span>' +
-          f.name +
-          "</span><span>" +
-          fmt(f.size) +
-          '</span><a href="/f2p-dl/' +
-          jobId +
-          "/" +
-          i +
-          '" class="btn-dl-sm" download>⬇️</a></div>';
-      }
-      h += "</div>";
-      h += '<button class="btn-clear" data-job="' + jobId + '">✕ 清除</button>';
-    }
-
-    if (isError) {
-      h += '<div class="task-error">❌ ' + (job.error || "") + "</div>";
-      h += '<button class="btn-clear" data-job="' + jobId + '">✕ 清除</button>';
-    }
-    if (isCancelled) {
-      h += '<button class="btn-clear" data-job="' + jobId + '">✕ 清除</button>';
-    }
+    h +=
+      '<div class="tbar-wrap"><div class="tbar" style="width:' +
+      pct +
+      '%"></div></div>' +
+      '<div class="task-pct">' +
+      pct +
+      "%</div>";
 
     h += "</div>";
   }
   tasksList.innerHTML = h;
-
-  // 事件绑定
-  tasksList.querySelectorAll(".btn-cancel").forEach((b) => {
-    b.addEventListener("click", function () {
-      sendToSW({ type: "cancel", jobId: this.dataset.job });
-    });
-  });
-  tasksList.querySelectorAll(".btn-clear").forEach((b) => {
-    b.addEventListener("click", function () {
-      sendToSW({ type: "consume", jobId: this.dataset.job });
-      jobHandlers.delete(this.dataset.job);
-      renderTasks();
-    });
-  });
 }
 
 function refreshTasks() {
@@ -645,31 +767,30 @@ function handleJobProgress(msg) {
 function handleJobDone(msg) {
   const job = jobHandlers.get(msg.jobId);
   if (!job) return;
-  job.status = "done";
-  job.progress = 100;
-  job.filename = msg.filename;
-  job.size = msg.size;
-  if (msg.kind === "decode" && msg.files) {
-    job.decodedFiles = msg.files;
-  }
+  // 通知 SW 清除 + 从本地列表移除
+  sendToSW({ type: "consume", jobId: msg.jobId });
+  jobHandlers.delete(msg.jobId);
   renderTasks();
-  toast("✅ " + (job.kind === "encode" ? "编码" : "解码") + "完成");
+  // 跳过分组下载的每条完成提示
+  if (!msg.jobId.includes("_")) {
+    if (job.kind === "encode") toast("✅ 编码完成");
+  }
 }
 
 function handleJobError(msg) {
   const job = jobHandlers.get(msg.jobId);
   if (!job) return;
-  job.status = "error";
-  job.error = msg.error;
+  sendToSW({ type: "consume", jobId: msg.jobId });
+  jobHandlers.delete(msg.jobId);
   renderTasks();
   toast("❌ " + msg.error);
 }
 
 function handleJobUpdate(msg) {
-  const job = jobHandlers.get(msg.jobId);
-  if (!job) return;
-  job.status = msg.status;
-  renderTasks();
+  if (msg.status === "cancelled") {
+    jobHandlers.delete(msg.jobId);
+    renderTasks();
+  }
 }
 
 function handleJobSync(j) {
@@ -680,17 +801,6 @@ function handleJobSync(j) {
     jobHandlers.set(j.jobId, { ...j });
   }
   renderTasks();
-}
-
-function handleJobData(msg) {
-  // 编码完成，从 SW 收到结果数据，创建 blob 下载
-  const blob = new Blob([msg.data], { type: "application/octet-stream" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = msg.fileName;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 // ── 启动 ──

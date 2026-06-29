@@ -67,16 +67,19 @@
             <div class="hint">支持任意格式，可追加</div>
           </div>
           <div class="file-list" id="fileList" style="display: none"></div>
-          <div class="enc-pwd">
+          <div class="pwd-row">
             <input
               type="text"
               id="encPwdInput"
               class="pwd-input"
-              placeholder="输入密码（留空以空字符串加密）"
+              placeholder="输入密码（可留空）"
             />
-            <label class="pwd-toggle"
-              ><input type="checkbox" id="encNameEncCb" /> 🔒
-              同时加密文件名</label
+            <span
+              class="name-enc-bubble"
+              id="encNameBubble"
+              role="button"
+              tabindex="0"
+              >🔒 加密文件名</span
             >
           </div>
           <div class="btn-group">
@@ -96,12 +99,12 @@
             <div class="text" id="decText">拖放图片，或点击选择</div>
             <div class="hint" id="decHint">通过文件头自动识别</div>
           </div>
-          <div class="dec-pwd">
+          <div class="pwd-row">
             <input
               type="text"
               id="decPwdInput"
               class="pwd-input"
-              placeholder="输入密码（留空用空字符串解密）"
+              placeholder="输入密码（可留空）"
             />
           </div>
           <div class="btn-group">

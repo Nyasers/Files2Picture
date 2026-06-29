@@ -21,6 +21,8 @@ self.addEventListener("activate", (event) =>
 
 const jobs = new Map();
 const pendingStreams = new Map(); // jobId -> { push, close }
+const pendingDecodeStreams = new Map(); // jobId -> { bmpFile, key, offset, size, nonce, name }
+const pendingDecodeGroups = new Map(); // groupId -> { files: [{offset,size,nonce,name}], key, chunkSize }
 let jobIdCounter = 0;
 
 // ── 通知点击 ──
@@ -50,9 +52,6 @@ self.addEventListener("message", (event) => {
     case "encode":
       event.waitUntil(runEncode(event, msg));
       break;
-    case "decode":
-      event.waitUntil(runDecode(event, msg));
-      break;
     case "cancel":
       cancelJob(msg.jobId);
       break;
@@ -62,6 +61,15 @@ self.addEventListener("message", (event) => {
     case "consume":
       consumeJob(msg.jobId);
       break;
+    case "decode-stream-prepare":
+      event.waitUntil(handleDecodeStreamPrepare(event, msg));
+      break;
+    case "encode-stream-prepare":
+      handleEncodeStreamPrepare(event, msg);
+      break;
+    case "decode-group":
+      event.waitUntil(handleDecodeGroup(event, msg));
+      break;
   }
 });
 
@@ -70,117 +78,362 @@ self.addEventListener("message", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
 
-  // 编码流式下载
-  const sm = url.pathname.match(/^\/f2p-dl-stream\/([^/]+)$/);
-  if (sm) {
-    const jobId = sm[1];
-    const fileSize = parseInt(url.searchParams.get("size")) || 0;
-    const fileName =
-      url.searchParams.get("name") ||
-      (jobs.get(jobId) || {}).filename ||
-      "F2P_export.bmp";
-    const headers = new Headers({
-      "Content-Type": "application/octet-stream; charset=utf-8",
-      "Content-Disposition":
-        'attachment; filename="' + fileName.replace(/"/g, "_") + '"',
-      "Content-Security-Policy": "default-src 'none'",
-    });
-    if (fileSize) headers.set("Content-Length", String(fileSize));
-    const stream = new ReadableStream({
-      start(c) {
-        pendingStreams.set(jobId, {
-          push: (d) => c.enqueue(d),
-          close: () => {
-            try {
-              c.close();
-            } catch {}
+  // 统一流式下载：POST /dl
+  // 请求体表单含 jobId + 可选 size/name
+  // encode job → pendingStreams 推送 BMP 像素
+  // decode job → pendingDecodeStreams 从 BMP 读取并解密
+  if (url.pathname !== "/dl" || event.request.method !== "POST") return;
+
+  event.respondWith(
+    (async () => {
+      const fd = await event.request.formData();
+      const p = Object.fromEntries(fd.entries());
+      const jobId = p.id;
+      if (!jobId) return new Response("缺少 id", { status: 400 });
+
+      // 编码流式下载
+      const encJob = pendingStreams.get(jobId);
+      if (encJob) {
+        const fileName =
+          p.name ||
+          encJob.name ||
+          (jobs.get(jobId) || {}).filename ||
+          "F2P_export.bmp";
+        const headers = new Headers({
+          "Content-Type": "application/octet-stream; charset=utf-8",
+          "Content-Disposition":
+            'attachment; filename="' + fileName.replace(/"/g, "_") + '"',
+          "Content-Security-Policy": "default-src 'none'",
+        });
+        if (encJob.size) headers.set("Content-Length", String(encJob.size));
+        const stream = new ReadableStream({
+          start(c) {
+            encJob.push = (d) => c.enqueue(d);
+            encJob.close = () => {
+              try {
+                c.close();
+              } catch {}
+            };
+          },
+          cancel() {
+            const j = jobs.get(jobId);
+            if (j) j.cancelled = true;
           },
         });
-      },
-      cancel() {
-        pendingStreams.delete(jobId);
-        const j = jobs.get(jobId);
-        if (j) j.cancelled = true;
-      },
-    });
-    event.respondWith(new Response(stream, { headers }));
-    return;
-  }
+        return new Response(stream, { headers });
+      }
 
-  // 解码下载（POST：页面带参数直接请求，SW 从 BMP 读取并解密后流式返回）
-  const dm = url.pathname.match(/^\/f2p-dl\/([^/]+)$/);
-  if (!dm) return;
+      // 解码流式下载
+      const decJob = pendingDecodeStreams.get(jobId);
+      if (decJob) {
+        pendingDecodeStreams.delete(jobId);
+        const fileName = decJob.name || "file.bin";
 
-  if (event.request.method === "POST") {
-    event.respondWith(handleDecodePost(event));
-    return;
-  }
+        const job = {
+          kind: "decode",
+          status: "running",
+          progress: 0,
+          currentFile: fileName,
+          label: fileName,
+          totalFiles: 1,
+        };
+        jobs.set(jobId, job);
+        postToClients({ type: "job-new", jobId, ...job });
 
-  event.respondWith(new Response("不支持的请求方式", { status: 405 }));
+        const headers = new Headers({
+          "Content-Type": "application/octet-stream; charset=utf-8",
+          "Content-Disposition": safeContentDisposition(fileName),
+        });
+        if (decJob.size) headers.set("Content-Length", String(decJob.size));
+        const stream = new ReadableStream({
+          async start(controller) {
+            try {
+              const bmp = await readBmpHeader(decJob.bmpFile);
+              let pos = decJob.offset,
+                left = decJob.size,
+                total = decJob.size;
+              while (left > 0 && !job.cancelled) {
+                const ck = (decJob.chunkSize || 64) * 1024;
+                const take = Math.min(left, ck);
+                const data = await readPayload(bmp, pos, take);
+                if (job.cancelled) break;
+                let out = data;
+                if (decJob.key && decJob.nonce)
+                  out = await aesDecrypt(
+                    data,
+                    decJob.key,
+                    decJob.nonce,
+                    (pos - decJob.offset) / 16,
+                  );
+                if (job.cancelled) break;
+                controller.enqueue(out);
+                left -= take;
+                pos += take;
+                const done = total - left;
+                const pct = Math.min(100, Math.round((done / total) * 100));
+                if (pct !== job.progress) {
+                  job.progress = pct;
+                  postToClients({
+                    type: "job-progress",
+                    jobId,
+                    progress: pct,
+                    done,
+                    total,
+                    currentFile: fileName,
+                  });
+                }
+              }
+              if (!job.cancelled) {
+                controller.close();
+                job.status = "done";
+                job.progress = 100;
+                postToClients({
+                  type: "job-done",
+                  jobId,
+                  kind: "decode",
+                  filename: fileName,
+                  size: total,
+                });
+              }
+            } catch (e) {
+              controller.error(e);
+              job.status = "error";
+              job.error = e.message;
+              postToClients({ type: "job-error", jobId, error: e.message });
+            }
+          },
+          cancel() {
+            job.cancelled = true;
+            job.status = "cancelled";
+            postToClients({ type: "job-update", jobId, status: "cancelled" });
+          },
+        });
+        return new Response(stream, { headers });
+      }
+
+      // 分组流式下载（通过 idx 索引 group 列表）
+      if (p.idx !== undefined) {
+        const group = pendingDecodeGroups.get(jobId);
+        if (group) {
+          const fi = group.files[parseInt(p.idx)];
+          if (fi) {
+            group.dispatched = (group.dispatched || 0) + 1;
+            if (group.dispatched >= group.files.length)
+              pendingDecodeGroups.delete(jobId);
+            const fileName = fi.name || "file.bin";
+            const gjId = jobId + "_" + p.idx;
+            const job = {
+              kind: "decode",
+              status: "running",
+              progress: 0,
+              currentFile: fileName,
+              label: fileName,
+              totalFiles: 1,
+            };
+            jobs.set(gjId, job);
+            postToClients({ type: "job-new", jobId: gjId, ...job });
+
+            const headers = new Headers({
+              "Content-Type": "application/octet-stream; charset=utf-8",
+              "Content-Disposition": safeContentDisposition(fileName),
+            });
+            if (fi.size) headers.set("Content-Length", String(fi.size));
+            const stream = new ReadableStream({
+              async start(controller) {
+                try {
+                  const bmp = await readBmpHeader(group.bmpFile);
+                  let pos = fi.offset,
+                    left = fi.size,
+                    total = fi.size;
+                  while (left > 0 && !job.cancelled) {
+                    const ck = (group.chunkSize || 64) * 1024;
+                    const take = Math.min(left, ck);
+                    const data = await readPayload(bmp, pos, take);
+                    if (job.cancelled) break;
+                    let out = data;
+                    if (group.key && fi.nonce)
+                      out = await aesDecrypt(
+                        data,
+                        group.key,
+                        fi.nonce,
+                        (pos - fi.offset) / 16,
+                      );
+                    if (job.cancelled) break;
+                    controller.enqueue(out);
+                    left -= take;
+                    pos += take;
+                    const done = total - left;
+                    const pct = Math.min(100, Math.round((done / total) * 100));
+                    if (pct !== job.progress) {
+                      job.progress = pct;
+                      postToClients({
+                        type: "job-progress",
+                        jobId: gjId,
+                        progress: pct,
+                        done,
+                        total,
+                        currentFile: fileName,
+                      });
+                    }
+                  }
+                  if (!job.cancelled) {
+                    controller.close();
+                    job.status = "done";
+                    job.progress = 100;
+                    postToClients({
+                      type: "job-done",
+                      jobId: gjId,
+                      kind: "decode",
+                      filename: fileName,
+                      size: total,
+                    });
+                  }
+                } catch (e) {
+                  controller.error(e);
+                  job.status = "error";
+                  job.error = e.message;
+                  postToClients({
+                    type: "job-error",
+                    jobId: gjId,
+                    error: e.message,
+                  });
+                }
+              },
+              cancel() {
+                job.cancelled = true;
+                job.status = "cancelled";
+                postToClients({
+                  type: "job-update",
+                  jobId: gjId,
+                  status: "cancelled",
+                });
+              },
+            });
+            return new Response(stream, { headers });
+          }
+        }
+      }
+
+      return new Response("未找到任务", { status: 404 });
+    })(),
+  );
 });
 
-async function handleDecodePost(event) {
+// ── 解码流式准备 ──
+
+async function handleDecodeStreamPrepare(event, msg) {
+  const {
+    jobId,
+    bmpFile,
+    offset,
+    size,
+    nonce,
+    name,
+    keyRaw,
+    chunkSize = 64,
+  } = msg;
+  if (!jobId) return;
   try {
-    const fd = await event.request.formData();
-    const bmpFile = fd.get("bmp");
-    const keyRaw = fd.get("key");
-    const offset = parseInt(fd.get("offset")) || 0;
-    const size = parseInt(fd.get("size")) || 0;
-    const nonceRaw = fd.get("nonce");
-    const name = fd.get("name") || "file.bin";
-
-    if (!bmpFile || !size) return new Response("参数不足", { status: 400 });
-
-    const bmp = await readBmpHeader(bmpFile);
-    let key = null,
-      nonce = null;
-    if (keyRaw && nonceRaw) {
-      const ab = await keyRaw.arrayBuffer();
+    let key = null;
+    if (keyRaw) {
       key = await crypto.subtle.importKey(
         "raw",
-        ab,
+        new Uint8Array(keyRaw),
         { name: "AES-CTR" },
         false,
         ["decrypt"],
       );
-      nonce = new Uint8Array(await nonceRaw.arrayBuffer());
     }
-
-    const headers = new Headers({
-      "Content-Type": "application/octet-stream; charset=utf-8",
-      "Content-Disposition":
-        'attachment; filename="' + name.replace(/"/g, "_") + '"',
+    pendingDecodeStreams.set(jobId, {
+      bmpFile,
+      key,
+      offset,
+      size,
+      nonce: nonce ? new Uint8Array(nonce) : null,
+      name,
+      chunkSize,
     });
-
-    const stream = new ReadableStream({
-      async start(controller) {
-        try {
-          let pos = offset,
-            left = size;
-          while (left > 0) {
-            const take = Math.min(left, 65536);
-            const data = await readPayload(bmp, pos, take);
-            let out = data;
-            if (key && nonce)
-              out = await aesDecrypt(data, key, nonce, (pos - offset) / 16);
-            controller.enqueue(out);
-            left -= take;
-            pos += take;
-          }
-          controller.close();
-        } catch (e) {
-          controller.error(e);
-        }
-      },
-    });
-
-    return new Response(stream, { headers });
+    if (event.source)
+      event.source.postMessage({ type: "decode-stream-ready", jobId, name });
   } catch (e) {
-    return new Response(e.message, { status: 500 });
+    if (event.source)
+      event.source.postMessage({
+        type: "decode-stream-error",
+        jobId,
+        error: e.message,
+      });
+  }
+}
+
+// ── 编码流式准备 ──
+
+function handleEncodeStreamPrepare(event, msg) {
+  const { jobId, filename, size } = msg;
+  if (!jobId) return;
+  pendingStreams.set(jobId, { push: null, close: null, size, name: filename });
+  if (event.source)
+    event.source.postMessage({
+      type: "encode-stream-ready",
+      jobId,
+      name: filename,
+    });
+}
+
+// ── 解码分组准备 ──
+
+async function handleDecodeGroup(event, msg) {
+  const { id, files, bmpFile, keyRaw, chunkSize } = msg;
+  if (!id || !files || !files.length || !bmpFile) {
+    if (event.source)
+      event.source.postMessage({
+        type: "decode-group-error",
+        id,
+        error: "参数不足",
+      });
+    return;
+  }
+  try {
+    let key = null;
+    if (keyRaw) {
+      key = await crypto.subtle.importKey(
+        "raw",
+        new Uint8Array(keyRaw),
+        { name: "AES-CTR" },
+        false,
+        ["decrypt"],
+      );
+    }
+    pendingDecodeGroups.set(id, {
+      bmpFile,
+      files: files.map((f) => ({
+        ...f,
+        nonce: f.nonce ? new Uint8Array(f.nonce) : null,
+      })),
+      key,
+      chunkSize: chunkSize || 64,
+      dispatched: 0,
+    });
+    if (event.source)
+      event.source.postMessage({ type: "decode-group-ready", id });
+  } catch (e) {
+    if (event.source)
+      event.source.postMessage({
+        type: "decode-group-error",
+        id,
+        error: e.message,
+      });
   }
 }
 
 // ── 工具 ──
+
+function safeContentDisposition(name) {
+  const safe = name.replace(/[\x00-\x1f\\"]/g, "_");
+  const latin1 = safe.replace(/[^\x00-\xFF]/g, "_");
+  const encoded = encodeURIComponent(safe);
+  // RFC 5987: latin fallback + UTF-8 explicit
+  return 'attachment; filename="' + latin1 + "\"; filename*=UTF-8''" + encoded;
+}
 
 function postToClients(msg) {
   self.clients.matchAll().then((cs) => {
@@ -200,7 +453,11 @@ function cancelJob(id) {
 }
 function consumeJob(id) {
   const j = jobs.get(id);
-  if (j && (j.status === "done" || j.status === "error")) jobs.delete(id);
+  if (
+    j &&
+    (j.status === "done" || j.status === "error" || j.status === "cancelled")
+  )
+    jobs.delete(id);
 }
 function listJobs() {
   const list = [];
@@ -246,6 +503,23 @@ async function runEncode(event, msg) {
   if (!pc) {
     postToClients({ type: "job-error", jobId, error: "下载流不可用" });
     return;
+  }
+  // POST /dl handler 的 start() 可能在 await formData() 后还没触发
+  // 等 push 就绪再继续
+  if (!pc.push) {
+    await new Promise((resolve) => {
+      const start = Date.now();
+      const check = () => {
+        if (pc.push) resolve();
+        else if (Date.now() - start > 10000) resolve();
+        else setTimeout(check, 5);
+      };
+      check();
+    });
+    if (!pc.push) {
+      postToClients({ type: "job-error", jobId, error: "下载流超时" });
+      return;
+    }
   }
   const push = pc.push,
     closeStream = pc.close;
@@ -366,56 +640,5 @@ async function runEncode(event, msg) {
       console.error(e);
       postToClients({ type: "job-error", jobId, error: e.message });
     }
-  }
-}
-
-// ── 解码（仅准备，不下发任务进度） ──
-
-async function runDecode(event, msg) {
-  const {
-    bmpFile,
-    fileIndex,
-    fileName,
-    fileSize,
-    dataStart,
-    nonceData,
-    rawKey,
-    jobId,
-  } = msg;
-  if (!jobId) return;
-  try {
-    const bmp = await readBmpHeader(bmpFile);
-    const hdr = await readPayload(bmp, 0, 8);
-    const marker = (hdr[0] << 24) | (hdr[1] << 16) | (hdr[2] << 8) | hdr[3];
-    const isEnc = (marker & 0xffffff00) === 0x46325000 && (marker & 0xff) > 1;
-    let key = null;
-
-    if (isEnc) {
-      if (!rawKey) throw Error("缺少加密密钥");
-      key = await crypto.subtle.importKey(
-        "raw",
-        rawKey,
-        { name: "AES-CTR" },
-        false,
-        ["decrypt"],
-      );
-      // magic check 已在页面完成，SW 直接信任
-    }
-
-    const nd = nonceData ? new Uint8Array(nonceData) : null;
-    jobs.set(jobId, {
-      kind: "decode",
-      status: "ready",
-      bmpMeta: bmp,
-      dataStart,
-      key,
-      nd,
-      fileList: [{ name: fileName, size: fileSize, offset: 0, nonceData: nd }],
-      cancelled: false,
-    });
-    // 通知页面可以踢下载了
-    postToClients({ type: "decode-ready", jobId });
-  } catch (e) {
-    postToClients({ type: "job-error", jobId, error: e.message });
   }
 }
