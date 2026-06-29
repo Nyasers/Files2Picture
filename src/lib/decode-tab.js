@@ -38,13 +38,15 @@ const chunkSizeInput = $("chunkSize");
 async function quickDetect(file) {
   try {
     const m = await readBmpHeader(file);
+    const bppLabel = m.bpp + "-bit";
     const hdr = await readPayload(m, 0, 8);
     const marker = (hdr[0] << 24) | (hdr[1] << 16) | (hdr[2] << 8) | hdr[3];
-    if (marker === 0x46325033) return "F2P3";
-    if (marker === 0x46325032) return "F2P2";
-    if (marker === 0x46325031) return "F2P1";
-    if (((hdr[0] << 8) | hdr[1]) > 0) return "旧格式";
-    return "未知格式";
+    let fmt = "未知格式";
+    if (marker === 0x46325033) fmt = "F2P3";
+    else if (marker === 0x46325032) fmt = "F2P2";
+    else if (marker === 0x46325031) fmt = "F2P1";
+    else if (((hdr[0] << 8) | hdr[1]) > 0) fmt = "旧格式";
+    return "BMP · " + bppLabel + " · " + fmt;
   } catch {
     return null;
   }
@@ -85,12 +87,12 @@ decInput.addEventListener("change", async function () {
   decKey = null;
   decBmpMeta = null;
   decText.textContent = decFile.name;
-  decHint.textContent = fmt(decFile.size) + " · BMP";
   decBtn.disabled = false;
   decFileList.style.display = "none";
   decBtn.textContent = "🔎 提取";
   const info = await quickDetect(decFile);
-  if (info) decHint.textContent += " · " + info;
+  if (info) decHint.textContent = fmt(decFile.size) + " · " + info;
+  else decHint.textContent = fmt(decFile.size);
 });
 
 decClearBtn.addEventListener("click", () => {
