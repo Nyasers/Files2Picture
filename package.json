@@ -4,7 +4,7 @@
   "description": "打包隐写不压缩 — 纯前端 BMP 打包工具",
   "private": true,
   "scripts": {
-    "build": "node build.js",
+    "build": "rspack build --config rspack.config.cjs",
     "dev": "set NODE_ENV=development && rspack dev --config rspack.config.cjs"
   },
   "devDependencies": {
