@@ -105,7 +105,8 @@ export function postViaIframe(url, fields) {
   document.body.appendChild(form);
   form.submit();
   form.remove();
-  setTimeout(() => f.remove(), 1000);
+  // 下载流响应到达后自动销毁，不依赖固定超时
+  f.addEventListener("load", () => f.remove());
 }
 
 // ── 初始化 ──
