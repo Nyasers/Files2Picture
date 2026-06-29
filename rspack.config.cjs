@@ -1,4 +1,5 @@
 // rspack.config.cjs — 双入口：页面（main）+ SW（f2p-sw）
+// SW 依赖页面，顺序编译避免多 compiler 共享 output 的冲突
 
 const rspack = require("@rspack/core");
 const path = require("path");
@@ -10,6 +11,7 @@ const distDir = path.resolve(__dirname, "dist");
 module.exports = [
   // ── 页面入口 ──
   {
+    name: "page",
     mode: isDev ? "development" : "production",
     context: __dirname,
     entry: "./src/main.js",
@@ -17,7 +19,7 @@ module.exports = [
     output: {
       path: distDir,
       filename: isDev ? "main.js" : "main.[contenthash:8].js",
-      clean: false,
+      clean: true,
     },
     devServer: {
       port: 3000,
@@ -72,8 +74,10 @@ module.exports = [
         },
   },
 
-  // ── Service Worker 入口 ──
+  // ── Service Worker 入口（等页面编译完再跑） ──
   {
+    name: "sw",
+    dependencies: ["page"],
     mode: isDev ? "development" : "production",
     context: __dirname,
     entry: "./src/sw.js",
