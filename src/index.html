@@ -4,20 +4,23 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1.0" />
     <title>F2P · Files to Picture</title>
+    <link rel="icon" href="favicon.png" />
   </head>
   <body>
     <div class="c">
       <h1>📦 F2P <small>Files to Picture</small></h1>
-      <div class="sub">打包隐写不压缩，文件直写 BMP 像素。</div>
+      <div class="sub">
+        打包隐写不压缩，文件直写 BMP 像素。任务在 Service Worker
+        中运行，可刷新页面。
+      </div>
 
       <div class="toast-container" id="toastContainer"></div>
 
       <div class="top-bar">
         <div class="mode-tabs">
-          <button class="mode-btn active" data-mode="enc" id="tabEnc">
-            🔒 编码
-          </button>
-          <button class="mode-btn" data-mode="dec" id="tabDec">🔓 解码</button>
+          <button class="mode-btn active" id="tabEnc">🔒 编码</button>
+          <button class="mode-btn" id="tabDec">🔓 解码</button>
+          <button class="mode-btn" id="tabTasks">📋 任务</button>
         </div>
         <div class="chunk-select">
           <label>读取分块</label>
@@ -64,11 +67,7 @@
             <div class="hint">支持任意格式，可追加</div>
           </div>
           <div class="file-list" id="fileList" style="display: none"></div>
-          <div class="btn-group">
-            <button class="btn" id="encBtn" disabled>🎨 生成图片</button>
-            <button class="btn-ghost" id="clearBtn">✕ 清空</button>
-          </div>
-          <div class="enc-pwd" id="encPwdArea">
+          <div class="enc-pwd">
             <input
               type="text"
               id="encPwdInput"
@@ -80,15 +79,9 @@
               同时加密文件名</label
             >
           </div>
-          <div class="progress-wrap" id="encProg">
-            <div class="progress-bar" id="encBar"></div>
-          </div>
-          <div class="status" id="encStatus">等待文件选择…</div>
-          <div class="result-box" id="encResult">
-            <div class="info">
-              <span id="imgInfo">-</span>
-              <a href="#" id="dlLink" class="dl-link" download>⬇️ 下载</a>
-            </div>
+          <div class="btn-group">
+            <button class="btn" id="encBtn" disabled>🎨 生成图片</button>
+            <button class="btn-ghost" id="clearBtn">✕ 清空</button>
           </div>
         </div>
       </div>
@@ -103,11 +96,7 @@
             <div class="text" id="decText">拖放图片，或点击选择</div>
             <div class="hint" id="decHint">通过文件头自动识别</div>
           </div>
-          <div class="btn-group">
-            <button class="btn" id="decBtn" disabled>🔎 提取</button>
-            <button class="btn-ghost" id="decClearBtn">✕ 清空</button>
-          </div>
-          <div class="dec-pwd" id="decPwdArea">
+          <div class="dec-pwd">
             <input
               type="text"
               id="decPwdInput"
@@ -115,24 +104,27 @@
               placeholder="输入密码（留空用空字符串解密）"
             />
           </div>
-          <div class="progress-wrap" id="decProg">
-            <div class="progress-bar" id="decBar"></div>
+          <div class="btn-group">
+            <button class="btn" id="decBtn" disabled>🔎 提取</button>
+            <button class="btn-ghost" id="decClearBtn">✕ 清空</button>
           </div>
-          <div class="status" id="decStatus">等待图片上传…</div>
-          <div class="result-box" id="decResult">
-            <div style="font-size: 0.8rem; color: #aaa; margin-bottom: 6px">
-              📄 提取的文件
+          <div class="file-list" id="decFileList" style="display: none"></div>
+        </div>
+      </div>
+
+      <!-- ═══ 任务 ═══ -->
+      <div id="tasksSection" class="section" style="display: none">
+        <div class="card">
+          <h2>📋 任务列表</h2>
+          <div id="tasksList">
+            <div style="text-align: center; color: #666; padding: 20px">
+              暂无任务
             </div>
-            <div
-              class="file-list"
-              id="decFiles"
-              style="max-height: 320px"
-            ></div>
           </div>
         </div>
       </div>
 
-      <div class="note">BMP 直写直读，文件不经过服务器。</div>
+      <div class="note">BMP 直写直读，编解码在 Service Worker 中运行。</div>
     </div>
   </body>
 </html>
