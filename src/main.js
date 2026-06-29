@@ -39,7 +39,22 @@ const tc = $("toastContainer"),
   encPwdInput = $("encPwdInput"),
   encNameEncCb = $("encNameEncCb"),
   decPwdInput = $("decPwdInput"),
-  decPwdArea = $("decPwdArea");
+  decPwdArea = $("decPwdArea"),
+  memHint = $("memHint");
+
+function updateMemHint() {
+  const kb = parseInt(chunkSizeInput.value) || 64;
+  const peak = kb * 8;
+  let cls;
+  if (peak < 262144) cls = "";
+  else if (peak < 1048576) cls = "warn";
+  else cls = "danger";
+  memHint.textContent = "●";
+  memHint.className = "mem-hint" + (cls ? " " + cls : "");
+  memHint.title = cls ? "内存占用偏高" : "内存占用正常";
+}
+chunkSizeInput.addEventListener("change", updateMemHint);
+updateMemHint();
 
 tabEnc.addEventListener("click", () => {
   tabEnc.classList.add("active");
@@ -578,10 +593,17 @@ encDrop.addEventListener("drop", (e) => {
 
 function sp(w, b, p) {
   w.classList.add("on");
-  b.style.width = p + "%";
+  if (p === undefined) {
+    b.classList.add("indeterminate");
+    b.style.width = "";
+  } else {
+    b.classList.remove("indeterminate");
+    b.style.width = p + "%";
+  }
 }
 function hp(w, b) {
   w.classList.remove("on");
+  b.classList.remove("indeterminate");
   b.style.width = "0%";
 }
 
@@ -591,7 +613,7 @@ async function doEnc() {
   try {
     encResult.classList.remove("show");
     dlLink.style.display = "";
-    sp(encProg, encBar, 5);
+    sp(encProg, encBar);
     const pwd = encPwdInput.value;
     let flags = 0;
     flags |= encNameEncCb.checked << 0;
@@ -604,7 +626,6 @@ async function doEnc() {
       ms += 2 + nl + 8 + 12 + (flags ? 12 : 0);
       ds += f.size;
     }
-    sp(encProg, encBar, 15);
 
     const d = new Date();
     const pad = (n) => String(n).padStart(2, "0");
@@ -685,19 +706,6 @@ async function doEnc() {
     for (let i = 0; i < sel.length; i++) {
       const f = sel[i];
       const nd = fileNonces[i];
-      encStatus.innerHTML =
-        "<span>⏳ (" +
-        ++fileIdx +
-        "/" +
-        sel.length +
-        ") " +
-        fmt(processed) +
-        "/" +
-        fmt(ds) +
-        '</span><span style="text-align:right">' +
-        f.name +
-        "</span>";
-      sp(encProg, encBar, 20 + (((processed / ds) * 60) | 0));
       try {
         const chunk = (parseInt(chunkSizeInput.value) || 64) * 1024;
         let pos = 0;
@@ -707,17 +715,30 @@ async function doEnc() {
           const encBuf = await aesEncrypt(buf, encKey, nd, pos / 16);
           bmp.wChunk(encBuf);
           pos = end;
+          if (cancelled) throw Error("下载已取消");
+          const done = processed + pos;
+          sp(encProg, encBar, ((done / ds) * 100) | 0);
+          encStatus.innerHTML =
+            "<span>⏳ (" +
+            fileIdx +
+            "/" +
+            sel.length +
+            ") " +
+            fmt(done) +
+            "/" +
+            fmt(ds) +
+            '</span><span style="text-align:right">' +
+            f.name +
+            "</span>";
         }
       } catch (e) {
         console.error(e);
         throw Error("读取失败: " + f.name);
       }
-      if (cancelled) throw Error("下载已取消");
       processed += f.size;
       await new Promise((r) => setTimeout(r, 50));
     }
 
-    sp(encProg, encBar, 85);
     if (cancelled) throw Error("下载已取消");
     bmp.pad();
     await bmp.flushAll();
@@ -889,6 +910,7 @@ async function doDec() {
         ((hdr[4] << 24) | (hdr[5] << 16) | (hdr[6] << 8) | hdr[7]) >>> 0;
       const { ent, payloadSize, ds } = await decMetaStream(m, fc, 0, null, 8);
       decMeta = { m, ent, payloadSize, ds };
+      sp(decProg, decBar, 80);
       renderDecResult(ent, payloadSize, t0);
       return;
     }
@@ -900,6 +922,7 @@ async function doDec() {
       const fc =
         ((hdr[4] << 24) | (hdr[5] << 16) | (hdr[6] << 8) | hdr[7]) >>> 0;
       const ms = 33;
+      sp(decProg, decBar, 30);
       const salt = await readPayload(m, 9, 16);
       const iterBytes = await readPayload(m, 25, 4);
       const iter =
@@ -910,6 +933,7 @@ async function doDec() {
       const key = await deriveEncKey(decPwdInput.value, salt, iter);
 
       // 验证密码（magic check：用 header 内的版本号）
+      sp(decProg, decBar, 50);
       const magicNonce = salt.subarray(0, 12);
       const magicEnc = await readPayload(m, 29, 4);
       const magicDec = await aesDecrypt(magicEnc, key, magicNonce, 0);
@@ -930,6 +954,7 @@ async function doDec() {
         ms,
       );
       decMeta = { m, ent, payloadSize, ds, key };
+      sp(decProg, decBar, 80);
       renderDecResult(ent, payloadSize, t0);
       return;
     }
@@ -938,6 +963,7 @@ async function doDec() {
     const fc = (hdr[4] << 8) | hdr[5];
     const { ent, payloadSize, ds } = await decMetaStream(m, fc, 0, null, 6);
     decMeta = { m, ent, payloadSize, ds };
+    sp(decProg, decBar, 80);
     renderDecResult(ent, payloadSize, t0);
   } catch (e) {
     console.error(e);

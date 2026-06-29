@@ -103,6 +103,18 @@ h1 small {
 .chunk-select select:hover {
   border-color: #555;
 }
+.mem-hint {
+  font-size: 1rem;
+  color: #4a4a4a;
+  line-height: 1;
+  cursor: default;
+}
+.mem-hint.warn {
+  color: #ff9944;
+}
+.mem-hint.danger {
+  color: #ff5555;
+}
 .section {
   margin-top: 1.5rem;
 }
@@ -319,6 +331,21 @@ label {
   background: linear-gradient(90deg, #4a4aff, #7a7aff);
   border-radius: 4px;
   transition: width 0.4s;
+}
+.progress-bar.indeterminate {
+  width: 100%;
+  background: linear-gradient(90deg, #4a4aff 25%, #7a7aff 50%, #4a4aff 75%);
+  background-size: 200% 100%;
+  animation: progress-sweep 1.2s linear infinite;
+  transition: none;
+}
+@keyframes progress-sweep {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
 }
 
 .status {
