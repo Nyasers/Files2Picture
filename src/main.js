@@ -459,7 +459,9 @@ async function doEnc() {
       ((ms += 2 + TE.encode(f.name).length + 8), (ds += f.size));
     sp(encProg, encBar, 15);
 
-    const ts = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "");
+    const d = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const ts = d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + 'T' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
     const fileStream = streamSaver.createWriteStream("F2P_" + ts + ".bmp");
     const writer = fileStream.getWriter();
     let cancelled = false;
