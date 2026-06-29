@@ -40,6 +40,7 @@ async function quickDetect(file) {
     const m = await readBmpHeader(file);
     const hdr = await readPayload(m, 0, 8);
     const marker = (hdr[0] << 24) | (hdr[1] << 16) | (hdr[2] << 8) | hdr[3];
+    if (marker === 0x46325033) return "F2P3";
     if (marker === 0x46325032) return "F2P2";
     if (marker === 0x46325031) return "F2P1";
     if (((hdr[0] << 8) | hdr[1]) > 0) return "旧格式";

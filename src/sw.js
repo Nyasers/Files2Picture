@@ -544,14 +544,14 @@ async function runEncode(event, msg) {
     const { w, h, fs } = bmp;
     push(bmp.header);
 
-    bmp.w32(0x46325032);
+    bmp.w32(0x46325033);
     bmp.w32(files.length);
     bmp.w8(flags);
     bmp.wChunk(salt);
     bmp.w32(10000);
 
     const magicEnc = await aesEncrypt(
-      new Uint8Array([0x46, 0x32, 0x50, 0x32]),
+      new Uint8Array([0x46, 0x32, 0x50, 0x33]),
       encKey,
       salt.subarray(0, 12),
       0,

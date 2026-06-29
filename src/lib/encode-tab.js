@@ -90,7 +90,7 @@ function updUI() {
   });
   const n = Math.max(
     4,
-    Math.ceil(Math.sqrt(Math.ceil((t + sel.length * 30 + 4) / 3))),
+    Math.ceil(Math.sqrt(Math.ceil((t + sel.length * 30 + 4) / 4))),
   );
   encBtn.textContent = "🎨 生成图片（" + fmt(t) + "~" + n + "×" + n + "）";
   encBtn.disabled = false;
@@ -147,7 +147,7 @@ encBtn.addEventListener("click", async () => {
   const files = sel.slice();
   const jobId = Date.now() + "";
 
-  // 预计算 BMP 总尺寸
+  // 预计算 BMP 总尺寸（32-bit：4 bytes/px，无行填充）
   const flags = nameEnc ? 1 : 0;
   let ms = 33,
     ds = 0;
@@ -157,10 +157,10 @@ encBtn.addEventListener("click", async () => {
     ds += f.size;
   }
   const ps = 8 + ms + ds;
-  const sz = Math.max(4, Math.ceil(Math.sqrt(Math.ceil(ps / 3))));
-  const st = sz * 3;
-  const rp = (4 - (st % 4)) % 4;
-  const rb = st + rp;
+  const sz = Math.max(4, Math.ceil(Math.sqrt(Math.ceil(ps / 4))));
+  const st = sz * 4;
+  const rp = 0;
+  const rb = st;
   const fs = 54 + rb * sz;
   const fn = "F2P_" + jobId + ".bmp";
 

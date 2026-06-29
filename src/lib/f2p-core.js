@@ -89,17 +89,18 @@ export async function readChunk(file, start, end, trySize) {
   }
 }
 
-// ── BMP 编码 ──
+// ── BMP 编码（F2P3：32-bit BGRA，A通道参与数据）──
 
 export function buildBMPStream(payloadSize, onRow) {
+  const BPP = 4; // 32-bit: 4 bytes/pixel (B G R A)
   const ps = 8 + payloadSize;
-  const np = Math.ceil(ps / 3);
+  const np = Math.ceil(ps / BPP);
   const sz = Math.min(0x7fffffff, Math.max(4, Math.ceil(Math.sqrt(np))));
   const w = sz,
     h = sz;
-  const st = w * 3;
-  const rp = (4 - (st % 4)) % 4;
-  const rb = st + rp;
+  const st = w * BPP;
+  const rp = 0; // 32-bit 天然 4 字节对齐
+  const rb = st;
   const pds = rb * h;
   const fs = 14 + 40 + pds;
 
@@ -115,7 +116,7 @@ export function buildBMPStream(payloadSize, onRow) {
   v.setInt32(18, w, true);
   v.setInt32(22, -h, true);
   v.setUint16(26, 1, true);
-  v.setUint16(28, 24, true);
+  v.setUint16(28, 32, true); // 32-bit
   v.setUint32(30, 0, true);
   v.setUint32(34, pds > 0xffffffff ? 0xffffffff : pds, true);
   v.setInt32(38, 2835, true);
@@ -128,7 +129,9 @@ export function buildBMPStream(payloadSize, onRow) {
     rowIdx = 0;
   let bp = 0;
   let headBuf = [];
-  const ch = [2, 1, 0];
+  // 32-bit BMP: 偏移 0=B, 1=G, 2=R, 3=A
+  // 数据按 [R, G, B, A] 顺序存入
+  const ch = [2, 1, 0, 3];
   let writeChain = Promise.resolve();
 
   function flushRow() {
@@ -155,23 +158,24 @@ export function buildBMPStream(payloadSize, onRow) {
       let i = 0,
         n = arr.length;
       while (i < n && bp < ps) {
-        if (bp % 3 === 0 && i + 3 <= n && bp + 3 <= ps) {
-          const off = col * 3;
-          rowBuf[off + 2] = arr[i];
-          rowBuf[off + 1] = arr[i + 1];
-          rowBuf[off + 0] = arr[i + 2];
-          for (let j = 0; j < 3 && headBuf.length < 16; j++)
+        if (bp % BPP === 0 && i + BPP <= n && bp + BPP <= ps) {
+          const off = col * BPP;
+          rowBuf[off + 2] = arr[i]; // R
+          rowBuf[off + 1] = arr[i + 1]; // G
+          rowBuf[off + 0] = arr[i + 2]; // B
+          rowBuf[off + 3] = arr[i + 3]; // A
+          for (let j = 0; j < BPP && headBuf.length < 16; j++)
             headBuf.push(arr[i + j]);
-          i += 3;
-          bp += 3;
+          i += BPP;
+          bp += BPP;
           col++;
         } else {
-          const off = col * 3;
-          rowBuf[off + ch[bp % 3]] = arr[i];
+          const off = col * BPP;
+          rowBuf[off + ch[bp % BPP]] = arr[i];
           if (headBuf.length < 16) headBuf.push(arr[i]);
           i++;
           bp++;
-          if (bp % 3 === 0) col++;
+          if (bp % BPP === 0) col++;
         }
         if (col >= w) flushRow();
       }
@@ -220,30 +224,34 @@ export function buildBMPStream(payloadSize, onRow) {
   };
 }
 
-// ── BMP 解码 ──
+// ── BMP 解码（兼容 24-bit / 32-bit）──
 
 export async function readBmpHeader(blob) {
   const buf = await blob.slice(0, 54).arrayBuffer();
   const v = new DataView(buf);
   if (v.getUint8(0) !== 0x42 || v.getUint8(1) !== 0x4d) throw Error("不是 BMP");
-  if (v.getUint16(28, true) !== 24) throw Error("仅支持 24-bit BMP");
+  const bpp = v.getUint16(28, true);
+  if (bpp !== 24 && bpp !== 32) throw Error("仅支持 24/32-bit BMP");
   const po = v.getUint32(10, true);
   const w = v.getInt32(18, true);
   const hr = v.getInt32(22, true);
   const h = hr < 0 ? -hr : hr;
-  const st = w * 3;
-  const rp = (4 - (st % 4)) % 4;
-  return { w, h, rb: st + rp, po, blob };
+  const bps = (bpp / 8) | 0; // 3 或 4
+  const st = w * bps;
+  const rp = bpp === 32 ? 0 : (4 - (st % 4)) % 4;
+  return { w, h, bpp, rb: st + rp, po, blob };
 }
 
 export async function readPayload(m, bp, len) {
-  const chMap = [2, 1, 0];
+  const bpp = m.bpp || 24;
+  const bps = (bpp / 8) | 0; // 3 或 4
+  const chMap = bpp === 32 ? [2, 1, 0, 3] : [2, 1, 0];
   const out = new Uint8Array(len);
   if (len === 0) return out;
   const { w, po, rb, blob } = m;
 
-  const pxStart = (bp / 3) | 0;
-  const pxEnd = ((bp + len - 1) / 3) | 0;
+  const pxStart = (bp / bps) | 0;
+  const pxEnd = ((bp + len - 1) / bps) | 0;
   const rowStart = (pxStart / w) | 0;
   const rowEnd = (pxEnd / w) | 0;
 
@@ -259,11 +267,11 @@ export async function readPayload(m, bp, len) {
 
   for (let off = 0; off < len; off++) {
     const pOff = bp + off;
-    const pxIdx = (pOff / 3) | 0;
+    const pxIdx = (pOff / bps) | 0;
     const row = (pxIdx / w) | 0;
     const relRow = row - rowStart;
     const pInRow = pxIdx % w;
-    const bufOff = relRow * rb + pInRow * 3 + chMap[pOff % 3];
+    const bufOff = relRow * rb + pInRow * bps + chMap[pOff % bps];
     out[off] = buf[bufOff];
   }
 
