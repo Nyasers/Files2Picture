@@ -12,7 +12,11 @@ export function fmt(b) {
     ? b + " B"
     : b < 1048576
       ? (b / 1024).toFixed(1) + " KB"
-      : (b / 1048576).toFixed(2) + " MB";
+      : b < 1073741824
+        ? (b / 1048576).toFixed(2) + " MB"
+        : b < 1099511627776
+          ? (b / 1073741824).toFixed(2) + " GB"
+          : (b / 1099511627776).toFixed(2) + " TB";
 }
 
 // ── 加密工具 ──
@@ -90,7 +94,7 @@ export async function readChunk(file, start, end, trySize) {
 export function buildBMPStream(payloadSize, onRow) {
   const ps = 8 + payloadSize;
   const np = Math.ceil(ps / 3);
-  const sz = Math.max(4, Math.ceil(Math.sqrt(np)));
+  const sz = Math.min(0x7fffffff, Math.max(4, Math.ceil(Math.sqrt(np))));
   const w = sz,
     h = sz;
   const st = w * 3;
@@ -103,7 +107,7 @@ export function buildBMPStream(payloadSize, onRow) {
   const v = new DataView(hdr);
   v.setUint8(0, 0x42);
   v.setUint8(1, 0x4d);
-  v.setUint32(2, fs, true);
+  v.setUint32(2, fs > 0xffffffff ? 0xffffffff : fs, true);
   v.setUint16(6, 0, true);
   v.setUint16(8, 0, true);
   v.setUint32(10, 54, true);
@@ -113,7 +117,7 @@ export function buildBMPStream(payloadSize, onRow) {
   v.setUint16(26, 1, true);
   v.setUint16(28, 24, true);
   v.setUint32(30, 0, true);
-  v.setUint32(34, pds, true);
+  v.setUint32(34, pds > 0xffffffff ? 0xffffffff : pds, true);
   v.setInt32(38, 2835, true);
   v.setInt32(42, 2835, true);
   v.setUint32(46, 0, true);

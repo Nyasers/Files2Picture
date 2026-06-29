@@ -170,11 +170,14 @@ decBtn.addEventListener("click", async () => {
 // ── 渲染文件列表 ──
 
 function renderDecFiles(ent) {
+  const totalSize = ent.reduce((s, f) => s + f.size, 0);
   let h =
-    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:0.8rem;color:#888">共 ' +
+    '<div class="dec-file-header"><span class="dec-file-summary">共 ' +
     ent.length +
-    " 个文件</span>" +
-    '<button class="btn-batch-dl" id="batchDlBtn">📥 下载选中</button></div>' +
+    " 个文件 · " +
+    fmt(totalSize) +
+    '</span><button class="btn-batch-dl" id="batchDlBtn">📥 下载选中</button></div>' +
+    '<div class="dec-file-body">' +
     '<div class="file-list-select-all"><label><input type="checkbox" id="selectAllDec" checked> 全选</label></div>';
   for (let i = 0; i < ent.length; i++) {
     const f = ent[i];
@@ -190,6 +193,7 @@ function renderDecFiles(ent) {
       i +
       '">⬇️</button></div>';
   }
+  h += "</div>";
   decFileList.innerHTML = h;
   decFileList.style.display = "block";
   decBtn.textContent = "✅ 已提取";

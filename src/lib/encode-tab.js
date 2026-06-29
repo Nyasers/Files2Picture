@@ -62,7 +62,13 @@ function updUI() {
     return;
   }
   const t = sel.reduce((s, f) => s + f.size, 0);
-  let e = "";
+  let e =
+    '<div class="enc-file-header"><span class="enc-file-summary">共 ' +
+    sel.length +
+    " 个文件 · " +
+    fmt(t) +
+    "</span></div>" +
+    '<div class="enc-file-body">';
   for (let i = 0; i < sel.length; i++) {
     const n = sel[i];
     e +=
@@ -74,12 +80,7 @@ function updUI() {
       i +
       '">✕</button></div>';
   }
-  e +=
-    '<div class="file-summary"><span>共 ' +
-    sel.length +
-    " 个</span><span>" +
-    fmt(t) +
-    "</span></div>";
+  e += "</div>";
   fileList.innerHTML = e;
   fileList.style.display = "block";
   fileList.querySelectorAll(".file-remove").forEach((b) => {
@@ -91,7 +92,7 @@ function updUI() {
     4,
     Math.ceil(Math.sqrt(Math.ceil((t + sel.length * 30 + 4) / 3))),
   );
-  encBtn.textContent = "🎨 生成图片（~" + n + "×" + n + "）";
+  encBtn.textContent = "🎨 生成图片（" + fmt(t) + "~" + n + "×" + n + "）";
   encBtn.disabled = false;
 }
 

@@ -430,6 +430,60 @@ label {
   background: #1a1a3a;
 }
 
+.dec-file-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 8px 6px;
+}
+.dec-file-summary {
+  font-size: 0.8rem;
+  color: #888;
+}
+.enc-file-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 8px 6px;
+}
+.enc-file-summary {
+  font-size: 0.8rem;
+  color: #888;
+}
+#fileList {
+  max-height: none;
+  overflow: visible;
+}
+.enc-file-body {
+  max-height: 180px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #333 transparent;
+}
+.enc-file-body::-webkit-scrollbar {
+  width: 4px;
+}
+.enc-file-body::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 2px;
+}
+#decFileList {
+  max-height: none;
+  overflow: visible;
+}
+.dec-file-body {
+  max-height: 180px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #333 transparent;
+}
+.dec-file-body::-webkit-scrollbar {
+  width: 4px;
+}
+.dec-file-body::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 2px;
+}
 .decode-file-item {
   display: flex;
   align-items: center;
