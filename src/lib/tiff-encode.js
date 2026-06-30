@@ -12,6 +12,7 @@ import {
   META_HEADER,
   w16,
   w32,
+  w64,
   we,
   T_IMAGE_WIDTH,
   T_IMAGE_LENGTH,
@@ -69,7 +70,7 @@ export async function buildIndexPixels(
   encMagic,
   encKey,
 ) {
-  const { N, NL, fileSizes, ifdOffsets, idxStripSize } = layout;
+  const { N, NL, fileSizes, dataOffsets, idxStripSize } = layout;
   const px = new Uint8Array(idxStripSize);
   for (let i = 0; i < idxStripSize; i++) px[i] = 0x80;
 
@@ -91,7 +92,7 @@ export async function buildIndexPixels(
 
   // ── 构建明文元数据 ──
   let metaSize = META_HEADER; // N(4) + encMagic(4) + reserved(4)
-  for (let i = 0; i < N; i++) metaSize += 4 + 4 + 2 + NL[i] + 4 + 12;
+  for (let i = 0; i < N; i++) metaSize += 8 + 2 + NL[i] + 4 + 12;
 
   const mb = new Uint8Array(metaSize);
   const mdv = new DataView(mb.buffer, mb.byteOffset, mb.length);
@@ -106,11 +107,8 @@ export async function buildIndexPixels(
   mo += 4; // reserved
 
   for (let i = 0; i < N; i++) {
-    const gi = layout.fileGIdx[i];
-    w32(mdv, mo, ifdOffsets[gi + 1]);
-    mo += 4;
-    w32(mdv, mo, layout.fileOffsetInStrip[i]);
-    mo += 4;
+    w64(mdv, mo, dataOffsets[i]);
+    mo += 8;
     w16(mdv, mo, NL[i]);
     mo += 2;
     const nb = new TextEncoder().encode(fileNames[i]);

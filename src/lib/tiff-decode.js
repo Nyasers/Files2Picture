@@ -129,10 +129,8 @@ export function parseFileEntries(decryptedData) {
   let off = META_HEADER; // N(4) + encMagic(4) + reserved(4) = 12
 
   for (let i = 0; i < N; i++) {
-    const ifdOff = dv.getUint32(off, true);
-    off += 4;
-    const offsetInStrip = dv.getUint32(off, true);
-    off += 4;
+    const dataOffset = Number(dv.getBigUint64(off, true));
+    off += 8;
     const nl = dv.getUint16(off, true);
     off += 2;
     const nameBytes = new Uint8Array(nl);
@@ -148,8 +146,7 @@ export function parseFileEntries(decryptedData) {
       name: new TextDecoder().decode(nameBytes),
       size: fileSize,
       nonce,
-      ifdOffset: ifdOff,
-      offsetInStrip,
+      dataOffset,
     });
   }
   return { entries, N };
@@ -208,29 +205,12 @@ export async function decodeTiff(file, password) {
   const parsed = parseFileEntries(fullDec);
   if (!parsed) throw Error("数据结构损坏");
 
-  // 补齐 strip 偏移（从各自 IFD 读取）
-  const le = tiff.endian || 0x49;
-  for (const e of parsed.entries) {
-    const fIfd = await readIFD(file, e.ifdOffset, le);
-    const ft = fIfd.tags;
-    const getVal = (tag) => {
-      const t = ft.get(tag);
-      if (!t || !t.inline) return 0;
-      return new DataView(
-        t.data.buffer,
-        t.data.byteOffset,
-        t.data.length,
-      ).getUint32(0, true);
-    };
-    e.stripOffset = getVal(273);
-    e.stripSize = getVal(279);
-  }
-
+  // dataOffset 已在索引条目中，直接使用
   const entries = parsed.entries.map((e) => ({
     name: e.name,
     size: e.size,
     nonceData: e.nonce,
-    offset: e.stripOffset + e.offsetInStrip,
+    offset: e.dataOffset,
     ctrStart: 0,
     _tiff: true,
   }));

@@ -1,5 +1,6 @@
 // ═══════════════════════════════════════════════
-// 标准 TIFF 公共模块（魔数 42，多页 IFD，零私有 tag）
+// 标准 TIFF 公共模块（魔数 42，单页 IFD + 尾巴载荷）
+// 看图软件只看到 IFD#0 的索引页，文件数据紧跟在后面
 // ═══════════════════════════════════════════════
 
 export const TIFF_HDR_SIZE = 8;
@@ -27,9 +28,9 @@ export const typeSize = { 3: 2, 4: 4 };
 // 其后全部加密: N(4) + encMagic(4) + reserved(4) + per-file[...]
 export const INDEX_HEADER = 36;
 export const META_HEADER = 12; // N(4) + encMagic(4) + reserved(4)
-// 每个文件条目: ifdOffset(4) + offsetInStrip(4) + nameLen(2) + name(nl) + fileSize(4) + nonce(12)
+// 每个文件条目: dataOffset(8) + nameLen(2) + name(nl) + fileSize(4) + nonce(12)
 export function indexEntrySize(nl) {
-  return 4 + 4 + 2 + nl + 4 + 12;
+  return 8 + 2 + nl + 4 + 12; // = 26 + nl
 }
 
 // ── IFD 常量 ──
@@ -47,6 +48,9 @@ export function w16(dv, o, v) {
 export function w32(dv, o, v) {
   dv.setUint32(o, v, true);
 }
+export function w64(dv, o, v) {
+  dv.setBigUint64(o, BigInt(v), true);
+}
 export function we(dv, o, tag, type, cnt, val) {
   w16(dv, o, tag);
   w16(dv, o + 2, type);
@@ -57,83 +61,14 @@ export function we(dv, o, tag, type, cnt, val) {
 // ── precomputeLayout ──
 
 /**
- * 最优分组：DP 最小化总 zero-padding
- * 对文件 [i, j) 分到同一页，padding = side²×4 − totalSize
+ * 布局：只有一页 IFD#0（索引页），文件数据直接拼接在尾巴上。
+ * 索引条目存 64-bit dataOffset，支持 >4GB。
  */
-function optimalGroups(fileSizes) {
-  const N = fileSizes.length;
-  if (N === 0) return [];
-
-  // prefix sum for O(1) range total
-  const ps = [0];
-  for (let i = 0; i < N; i++) ps.push(ps[i] + fileSizes[i]);
-
-  function groupPadding(i, j) {
-    const total = ps[j] - ps[i];
-    const side = Math.max(1, Math.ceil(Math.sqrt(Math.ceil(total / 4))));
-    return side * side * 4 - total;
-  }
-
-  // DP[i] = min padding for first i files
-  const dp = [0];
-  const split = [0]; // split[i] = start of last group for first i files
-  for (let i = 1; i <= N; i++) {
-    let best = Infinity,
-      bestJ = 0;
-    for (let j = 0; j < i; j++) {
-      const val = dp[j] + groupPadding(j, i);
-      if (val < best) {
-        best = val;
-        bestJ = j;
-      }
-    }
-    dp.push(best);
-    split.push(bestJ);
-  }
-
-  // Reconstruct groups
-  const groups = [];
-  let end = N;
-  while (end > 0) {
-    const start = split[end];
-    groups.unshift({ start, end });
-    end = start;
-  }
-
-  // Compute group properties
-  for (const g of groups) {
-    const total = ps[g.end] - ps[g.start];
-    const side = Math.max(1, Math.ceil(Math.sqrt(Math.ceil(total / 4))));
-    g.totalSize = total;
-    g.side = side;
-    g.stripSize = side * side * 4;
-  }
-
-  return groups;
-}
-
 export function precomputeLayout(files) {
   const N = files.length;
   const enc = new TextEncoder();
   const NL = files.map((f) => enc.encode(f.name).length);
   const fileSizes = files.map((f) => f.size);
-
-  // ── 最优分组 ──
-  const groups = optimalGroups(fileSizes);
-  const NG = groups.length;
-
-  // 每个文件所属组索引和组内偏移
-  const fileGIdx = [];
-  const fileOffsetInStrip = [];
-  for (let gi = 0; gi < NG; gi++) {
-    const g = groups[gi];
-    let off = 0;
-    for (let fi = g.start; fi < g.end; fi++) {
-      fileGIdx[fi] = gi;
-      fileOffsetInStrip[fi] = off;
-      off += fileSizes[fi];
-    }
-  }
 
   // 索引表大小（含明文头 + META_HEADER + 文件条目）
   const indexSize =
@@ -147,38 +82,27 @@ export function precomputeLayout(files) {
   const idxStripSize = idxSide * idxSide * 4;
 
   const H = TIFF_HDR_SIZE;
-  const ifdTotal = STD_HDR + STD_EXT; // 每个 IFD 块大小（含外部 BPS）
+  const ifdTotal = STD_HDR + STD_EXT; // IFD#0 块大小（含外部 BPS）
+  const strip0Off = H + ifdTotal; // 索引页 strip 偏移
 
-  // IFD#0
-  const ifd0Off = H;
-  const strip0Off = ifd0Off + ifdTotal;
+  // 文件数据从索引页后开始
   let cursor = strip0Off + idxStripSize;
-
-  const ifdOffsets = [ifd0Off];
-  const stripOffsets = [strip0Off];
-
-  for (let gi = 0; gi < NG; gi++) {
-    ifdOffsets.push(cursor);
-    cursor += ifdTotal;
-    stripOffsets.push(cursor);
-    cursor += groups[gi].stripSize;
+  const dataOffsets = [];
+  for (let i = 0; i < N; i++) {
+    dataOffsets.push(cursor);
+    cursor += fileSizes[i]; // 直接拼接，无 padding
   }
 
   return {
     N,
-    NG,
     NL,
     fileSizes,
-    groups,
-    fileGIdx,
-    fileOffsetInStrip,
+    dataOffsets,
     indexSize,
     idxSide,
     idxStripSize,
     ifdTotal,
     H,
-    ifdOffsets,
-    stripOffsets,
     totalSize: cursor,
   };
 }
