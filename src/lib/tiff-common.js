@@ -67,11 +67,13 @@ export function precomputeLayout(files) {
     return side * side * 4;
   });
 
-  // 索引表大小
+  // 索引表大小（含明文头 + META_HEADER + 文件条目）
   const indexSize =
     N > 0
-      ? INDEX_HEADER + files.reduce((s, _, i) => s + indexEntrySize(NL[i]), 0)
-      : INDEX_HEADER;
+      ? INDEX_HEADER +
+        META_HEADER +
+        files.reduce((s, _, i) => s + indexEntrySize(NL[i]), 0)
+      : INDEX_HEADER + META_HEADER;
   // IFD#0 像素尺寸：至少 4x4，让看图软件能看到东西
   const idxSide = Math.max(4, Math.ceil(Math.sqrt(Math.ceil(indexSize / 4))));
   const idxStripSize = idxSide * idxSide * 4;
