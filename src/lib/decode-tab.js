@@ -62,11 +62,11 @@ decInput.addEventListener("change", async function () {
   decKey = null;
   decBmpMeta = null;
   decText.textContent = decFile.name;
-  decHint.textContent = fmt(decFile.size) + " · ";
   decFileList.style.display = "none";
   decBtn.textContent = "🔎 提取";
 
   const info = await quickDetect(decFile);
+  decHint.textContent = fmt(decFile.size) + " · ";
   if (info) {
     decHint.textContent += info;
     decHint.classList.remove("err");
