@@ -62,12 +62,19 @@ decInput.addEventListener("change", async function () {
   decKey = null;
   decBmpMeta = null;
   decText.textContent = decFile.name;
-  decBtn.disabled = false;
   decFileList.style.display = "none";
   decBtn.textContent = "🔎 提取";
+
   const info = await quickDetect(decFile);
-  if (info) decHint.textContent = fmt(decFile.size) + " · " + info;
-  else decHint.textContent = fmt(decFile.size);
+  if (info) {
+    decHint.textContent = fmt(decFile.size) + " · " + info;
+    decHint.classList.remove("err");
+    decBtn.disabled = false;
+  } else {
+    decHint.textContent = fmt(decFile.size) + " · ⚠️ 非 F2P 文件";
+    decHint.classList.add("err");
+    decBtn.disabled = true;
+  }
 });
 
 decClearBtn.addEventListener("click", () => {
@@ -78,6 +85,7 @@ decClearBtn.addEventListener("click", () => {
   decInput.value = "";
   decText.textContent = "拖放图片，或点击选择";
   decHint.textContent = "通过文件头自动识别";
+  decHint.classList.remove("err");
   decBtn.disabled = true;
   decFileList.style.display = "none";
 });
