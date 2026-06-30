@@ -1,96 +1,73 @@
-# F2P3 · Files to Picture
+# Files2Picture · F2P4
 
-把文件打包隐写到 **32-bit BMP** 像素里，BGR **和 Alpha 通道全部用于数据存储**，一张图带走。加密、流式、纯前端。
+把任意文件打包隐写到 **32-bit BMP** 像素里，一张图带走。加密、流式、纯前端。
 
 ## 特性
 
-- **加密打包** AES-256-CTR 加密内容，PBKDF2 密钥派生，密码验证有 magic check
+- **加密打包** AES-256-CTR 加密内容，PBKDF2 密钥派生，密码校验加密 magic
 - **超大文件支持** 单文件上限 2^53 - 1，文件数上限 2^32，总 payload 不限
-- **32-bit BMP 编码** 每像素 4 字节（BGRA），Alpha 通道也承载数据，相比 24-bit 密度提升 33%
-- **无行填充浪费** 32-bit BMP 天然 4 字节对齐，零 padding，文件结构更紧凑
-- **流式处理** FileReader 分块 + Promise 链背压 + StreamSaver 直写磁盘，不 OOM
-- **按需解码** 解析 BMP 时只读元信息，点哪个文件再按需提取
-- **可调分块** 1 KB ~ 64 MB，大块利用磁盘 IO，小块兼容低端设备
-- **编解码分离** 顶部标签切换，编码/解码互不干扰
+- **BGRA 原生编码** 数据字节按像素的 BGRA 通道顺序直接写入，通道映射零开销
+- **32-bit BMP 直写** 每像素 4 字节（BGRA），Alpha 通道承载数据，密度比 24-bit 高 33%
+- **无行填充浪费** 32-bit BMP 天然 4 字节对齐，零 padding
+- **流式处理** ReadableStream 分块 + StreamSaver 直写磁盘，不 OOM
+- **按需解码** 解析时只读元信息，点哪个文件再按需提取解密
+- **编解码分离** 顶部标签切换，互不干扰
 - **纯前端** 所有操作在浏览器完成，不上传服务器
 
 ## 二进制格式
 
-### F2P3（当前格式）
+### F2P4（当前格式）
 
-BMP 规格：**32-bit BGRA**，`BIT_COUNT = 32`，每像素 4 字节，行步长 = 宽度 × 4（无行对齐填充）。
+BMP 规格：**32-bit BGRA**，`BIT_COUNT = 32`，每像素 4 字节，行步长 = 宽度 × 4。
 
-数据层像素布局（以 BMP 文件中的字节偏移计）：
+数据直接按 **BGRA 原生顺序**写入像素，字节 N → 像素偏移 N（B=0, G=1, R=2, A=3），无需通道映射。4 字节对齐的块可直接 `Uint8Array.set()` 拷贝。
 
-```
-偏移 0：B（blue）
-偏移 1：G（green）
-偏移 2：R（red）
-偏移 3：A（alpha）
-```
-
-编码时数据字节按 **R→G→B→A** 顺序依次填入各通道，解码时反向提取。
-
-元数据流（位于像素数据头部）：
+元数据流（位于像素数据头部，全部大端序）：
 
 ```
-[4B marker "F2P3"][4B fileCount][1B flags][16B salt][4B iter][4B magic][encrypted entries...][encrypted data...]
+偏移  0: [4B magic  = 0x46325034 "F2P4"]
+偏移  4: [4B fileCount]
+偏移  8: [16B salt]
+偏移 24: [4B iter (PBKDF2 迭代次数)]
+偏移 28: [4B encMagic (AES 加密的 "F2P4"，用于密码校验)]
+偏移 32: [文件条目...]
 ```
 
-每个 entry：
+每个文件条目（**文件名强制加密**）：
 
 ```
-flags=0x00（仅加密内容）：
-[2B nameLen][UTF-8 name][8B dataLen][12B nonceData]
-
-flags=0x01（加密内容+文件名）：
-[2B nameLen][encrypted name][8B dataLen][12B nonceName][12B nonceData]
+[2B nameLen][encrypted name][8B dataLen][12B nameNonce][12B dataNonce]
 ```
 
-- marker = `0x46325033`（`F2P3`），识别格式版本
-- flags 第 0 位：1 = 同时加密文件名
+- magic = `0x46325034`（`F2P4`），按 BGRA 原生读取可直验
 - salt（16B 随机）+ iter（4B，默认 10000）：PBKDF2 参数
-- magic（4B）：加密后的 "F2P3"，用于密码验证
-- 文件名加密用 `nonceName`，内容加密用 `nonceData`，独立的 12B 随机 nonce
-- 文件大小 8B 大端（64 位），文件名长度 2B 大端（16 位）
-- 全部为大端序
+- encMagic（4B）：用 AES-CTR 加密的 "F2P4"，解码时解密对比以验证密码
+- 文件名用 AES-CTR + nameNonce 加密，文件内容用 dataNonce 加密，nonce 独立随机
+- 文件大小 8B 大端（64-bit），文件名长度 2B 大端（16-bit）
+- F2P4 **无 flags 字节**，文件名强制加密
 
 ### 向下兼容
 
-F2P3 解码器自动兼容 **F2P2**（24-bit BMP）和 **F2P1**（旧版无加密）及更早格式：
+解码器自动识别 F2P4 / F2P3 / F2P2 / F2P1：
 
-| 版本     | 魔数         | BMP 位深 | 检测方式 |
-| -------- | ------------ | -------- | -------- |
-| **F2P3** | `0x46325033` | 32-bit   | 自动识别 |
-| F2P2     | `0x46325032` | 24-bit   | 自动识别 |
-| F2P1     | `0x46325031` | 24-bit   | 自动识别 |
-| 旧格式   | —            | 24-bit   | 自动识别 |
+| 版本     | 魔数         | BMP 位深 | 通道映射         |
+| -------- | ------------ | -------- | ---------------- |
+| **F2P4** | `0x46325034` | 32-bit   | BGRA 原生        |
+| F2P3     | `0x46325033` | 32-bit   | `[2,1,0,3]` 映射 |
+| F2P2     | `0x46325032` | 24-bit   | `[2,1,0]` 映射   |
+| F2P1     | `0x46325031` | 24-bit   | `[2,1,0]` 映射   |
 
-解码时根据 BMP 头中的 `bit_count` 字段（24 或 32）自动选择像素步长和通道映射，对调用方透明。
-
-### F2P2（旧版加密格式，可解码）
+各版本解码器独立文件，按 magic 分发：
 
 ```
-[4B marker "F2P2"][4B fileCount][1B flags][16B salt][4B iter][4B magic][encrypted entries...][encrypted data...]
+f2p-decode.js  → 识别 magic，派发到对应版本
+  ├─ f2p1-decode.js  F2P1（无加密）
+  ├─ f2p2-decode.js  F2P2（24-bit，加密，映射编码）
+  ├─ f2p3-decode.js  F2P3（32-bit，加密，映射编码）
+  └─ f2p4-decode.js  F2P4（32-bit，加密，BGRA 原生）
 ```
 
-元数据结构与 F2P3 相同，差异仅在于 BMP 位深（24-bit）和行对齐填充。
-
-### F2P1（旧版无加密，可解码）
-
-```
-[4B marker "F2P1"][4B fileCount][entries...][data...]
-```
-
-无加密，每文件 8B 大小。
-
-### 旧格式
-
-```
-[4B marker][2B fileCount][entries...][data...]
-```
-
-每文件 4B 大小。无 marker 校验。
+F2P4 编码器在 `f2p4-encode.js`，通过 `f2p-encode.js` 统一入口导出。
 
 ## 使用
 
@@ -100,15 +77,15 @@ npm run build    # 生产构建 → dist/
 ```
 
 1. 打开页面，顶部选编码/解码模式
-2. 编码：拖放文件 → 可选密码 / 文件名加密 → 点「生成图片」→ StreamSaver 保存
-3. 解码：拖放 BMP → 自动尝试空密码识别 → 输入密码后点「提取」→ 点文件下载
+2. 编码：拖放文件 → 可选密码 → 点「生成图片」→ StreamSaver 保存
+3. 解码：拖放 BMP → 输入密码 → 点「提取」→ 点文件下载
 
 ## 密码说明
 
 - 留空 = 空字符串密钥（每份 BMP 有随机 salt，密文每次都不同）
 - 设密码 = 自定义密钥
-- 解码时密码错误会被 magic check 捕获，显示"密码错误"
-- 文件名加密为独立选项（勾选后 entry 的文件名也被 AES-CTR 加密）
+- 解码时密码错误会被 encMagic 校验捕获，显示"密码错误"
+- **F2P4 强制加密文件名**，无此开关（F2P3 及更早版本保留文件名加密选项）
 
 ## 分块大小
 
