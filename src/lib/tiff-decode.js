@@ -131,6 +131,8 @@ export function parseFileEntries(decryptedData) {
   for (let i = 0; i < N; i++) {
     const ifdOff = dv.getUint32(off, true);
     off += 4;
+    const offsetInStrip = dv.getUint32(off, true);
+    off += 4;
     const nl = dv.getUint16(off, true);
     off += 2;
     const nameBytes = new Uint8Array(nl);
@@ -147,6 +149,7 @@ export function parseFileEntries(decryptedData) {
       size: fileSize,
       nonce,
       ifdOffset: ifdOff,
+      offsetInStrip,
     });
   }
   return { entries, N };
@@ -227,7 +230,7 @@ export async function decodeTiff(file, password) {
     name: e.name,
     size: e.size,
     nonceData: e.nonce,
-    offset: e.stripOffset,
+    offset: e.stripOffset + e.offsetInStrip,
     ctrStart: 0,
     _tiff: true,
   }));

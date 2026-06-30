@@ -570,11 +570,11 @@ async function runEncode(event, msg) {
       encKey,
     );
 
-    // 构建 IFD 块
+    // 构建 IFD 块（每组一个 IFD）
     const header = buildHeader(layout.H);
     const ifd0 = buildIFD(
       layout.ifdOffsets[0],
-      layout.N > 0 ? layout.ifdOffsets[1] : 0,
+      layout.NG > 0 ? layout.ifdOffsets[1] : 0,
       layout.idxSide,
       layout.idxSide,
       layout.stripOffsets[0],
@@ -582,16 +582,16 @@ async function runEncode(event, msg) {
     );
 
     const ifdBufs = [];
-    for (let i = 0; i < layout.N; i++) {
-      const wi = Math.max(1, Math.ceil(Math.sqrt(Math.ceil(layout.S[i] / 4))));
-      const nextOff = i + 1 < layout.N ? layout.ifdOffsets[i + 2] : 0;
+    for (let gi = 0; gi < layout.NG; gi++) {
+      const g = layout.groups[gi];
+      const nextOff = gi + 1 < layout.NG ? layout.ifdOffsets[gi + 2] : 0;
       const buf = buildIFD(
-        layout.ifdOffsets[i + 1],
+        layout.ifdOffsets[gi + 1],
         nextOff,
-        wi,
-        wi,
-        layout.stripOffsets[i + 1],
-        layout.S[i],
+        g.side,
+        g.side,
+        layout.stripOffsets[gi + 1],
+        g.stripSize,
       );
       ifdBufs.push(buf);
     }
@@ -601,41 +601,48 @@ async function runEncode(event, msg) {
     push(ifd0);
     push(indexPixels); // IFD#0 strip
 
-    // 写入各文件
+    // 逐组写入
     const ck = chunkSize * 1024;
     let totalBytes = 0;
-    for (let i = 0; i < layout.N; i++) {
-      const f = files[i];
-      const nd = payloadNonces.subarray(i * 12, (i + 1) * 12);
+    for (let gi = 0; gi < layout.NG; gi++) {
+      const g = layout.groups[gi];
 
-      push(ifdBufs[i]); // 数据 IFD
+      push(ifdBufs[gi]); // 数据 IFD
 
-      job.currentFile = f.name;
-      let pos = 0;
-      while (pos < f.size) {
-        if (job.cancelled) throw Error("cancel");
-        const end = Math.min(pos + ck, f.size);
-        const buf = await readChunk(f, pos, end, ck);
-        const enc = await aesEncrypt(buf, encKey, nd, pos / 16);
-        push(enc);
-        pos = end;
-        const done = totalBytes + pos;
-        const allSizes = layout.fileSizes.reduce((a, b) => a + b, 0);
-        const pct =
-          allSizes > 0 ? Math.min(100, ((done / allSizes) * 100) | 0) : 100;
-        job.progress = pct;
-        postToClients({
-          type: "job-progress",
-          jobId,
-          progress: pct,
-          done,
-          total: allSizes,
-          currentFile: f.name,
-        });
+      // 组内所有文件依次加密
+      for (let fi = g.start; fi < g.end; fi++) {
+        const f = files[fi];
+        const nd = payloadNonces.subarray(fi * 12, (fi + 1) * 12);
+
+        job.currentFile = f.name;
+        let pos = 0;
+        while (pos < f.size) {
+          if (job.cancelled) throw Error("cancel");
+          const end = Math.min(pos + ck, f.size);
+          const buf = await readChunk(f, pos, end, ck);
+          const enc = await aesEncrypt(buf, encKey, nd, pos / 16);
+          push(enc);
+          pos = end;
+          const done = totalBytes + pos;
+          const allSizes = layout.fileSizes.reduce((a, b) => a + b, 0);
+          const pct =
+            allSizes > 0 ? Math.min(100, ((done / allSizes) * 100) | 0) : 100;
+          job.progress = pct;
+          postToClients({
+            type: "job-progress",
+            jobId,
+            progress: pct,
+            done,
+            total: allSizes,
+            currentFile: f.name,
+          });
+        }
+        totalBytes += f.size;
       }
-      totalBytes += f.size;
 
-      const paddingSize = layout.S[i] - layout.fileSizes[i];
+      // 填充至 strip 对齐
+      const groupEncTotal = g.totalSize;
+      const paddingSize = g.stripSize - groupEncTotal;
       if (paddingSize > 0) push(new Uint8Array(paddingSize));
     }
 

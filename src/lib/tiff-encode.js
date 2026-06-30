@@ -91,7 +91,7 @@ export async function buildIndexPixels(
 
   // ── 构建明文元数据 ──
   let metaSize = META_HEADER; // N(4) + encMagic(4) + reserved(4)
-  for (let i = 0; i < N; i++) metaSize += 4 + 2 + NL[i] + 4 + 12;
+  for (let i = 0; i < N; i++) metaSize += 4 + 4 + 2 + NL[i] + 4 + 12;
 
   const mb = new Uint8Array(metaSize);
   const mdv = new DataView(mb.buffer, mb.byteOffset, mb.length);
@@ -106,7 +106,10 @@ export async function buildIndexPixels(
   mo += 4; // reserved
 
   for (let i = 0; i < N; i++) {
-    w32(mdv, mo, ifdOffsets[i + 1]);
+    const gi = layout.fileGIdx[i];
+    w32(mdv, mo, ifdOffsets[gi + 1]);
+    mo += 4;
+    w32(mdv, mo, layout.fileOffsetInStrip[i]);
     mo += 4;
     w16(mdv, mo, NL[i]);
     mo += 2;

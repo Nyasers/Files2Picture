@@ -42,7 +42,7 @@ export async function encodeTiff(files, password, options = {}) {
   const header = buildHeader(layout.H);
   const ifd0 = buildIFD(
     layout.ifdOffsets[0],
-    layout.N > 0 ? layout.ifdOffsets[1] : 0,
+    layout.NG > 0 ? layout.ifdOffsets[1] : 0,
     layout.idxSide,
     layout.idxSide,
     layout.stripOffsets[0],
@@ -52,33 +52,35 @@ export async function encodeTiff(files, password, options = {}) {
   const fileChunks = [];
   const ck = chunkSize * 1024;
 
-  for (let i = 0; i < layout.N; i++) {
-    const f = files[i];
-    const nd = payloadNonces.subarray(i * 12, (i + 1) * 12);
-    const wi = Math.max(1, Math.ceil(Math.sqrt(Math.ceil(layout.S[i] / 4))));
-    const nextOff = i + 1 < layout.N ? layout.ifdOffsets[i + 2] : 0;
+  for (let gi = 0; gi < layout.NG; gi++) {
+    const g = layout.groups[gi];
+    const nextOff = gi + 1 < layout.NG ? layout.ifdOffsets[gi + 2] : 0;
     const ifdBuf = buildIFD(
-      layout.ifdOffsets[i + 1],
+      layout.ifdOffsets[gi + 1],
       nextOff,
-      wi,
-      wi,
-      layout.stripOffsets[i + 1],
-      layout.S[i],
+      g.side,
+      g.side,
+      layout.stripOffsets[gi + 1],
+      g.stripSize,
     );
 
-    // 分块加密文件数据
+    // 组内所有文件依次加密
     const encDataParts = [];
-    let pos = 0;
-    while (pos < f.size) {
-      const end = Math.min(pos + ck, f.size);
-      const buf = new Uint8Array(await f.slice(pos, end).arrayBuffer());
-      const enc = await aesEncrypt(buf, encKey, nd, pos / 16);
-      encDataParts.push(enc);
-      pos = end;
+    for (let fi = g.start; fi < g.end; fi++) {
+      const f = files[fi];
+      const nd = payloadNonces.subarray(fi * 12, (fi + 1) * 12);
+      let pos = 0;
+      while (pos < f.size) {
+        const end = Math.min(pos + ck, f.size);
+        const buf = new Uint8Array(await f.slice(pos, end).arrayBuffer());
+        const enc = await aesEncrypt(buf, encKey, nd, pos / 16);
+        encDataParts.push(enc);
+        pos = end;
+      }
     }
     // 填充至 strip 对齐
     const encTotal = encDataParts.reduce((s, p) => s + p.length, 0);
-    const padding = layout.S[i] - encTotal;
+    const padding = g.stripSize - encTotal;
     if (padding > 0) encDataParts.push(new Uint8Array(padding));
 
     fileChunks.push({

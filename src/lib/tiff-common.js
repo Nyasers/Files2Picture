@@ -27,8 +27,9 @@ export const typeSize = { 3: 2, 4: 4 };
 // 其后全部加密: N(4) + encMagic(4) + reserved(4) + per-file[...]
 export const INDEX_HEADER = 36;
 export const META_HEADER = 12; // N(4) + encMagic(4) + reserved(4)
+// 每个文件条目: ifdOffset(4) + offsetInStrip(4) + nameLen(2) + name(nl) + fileSize(4) + nonce(12)
 export function indexEntrySize(nl) {
-  return 4 + 2 + nl + 4 + 12;
+  return 4 + 4 + 2 + nl + 4 + 12;
 }
 
 // ── IFD 常量 ──
@@ -55,17 +56,84 @@ export function we(dv, o, tag, type, cnt, val) {
 
 // ── precomputeLayout ──
 
+/**
+ * 最优分组：DP 最小化总 zero-padding
+ * 对文件 [i, j) 分到同一页，padding = side²×4 − totalSize
+ */
+function optimalGroups(fileSizes) {
+  const N = fileSizes.length;
+  if (N === 0) return [];
+
+  // prefix sum for O(1) range total
+  const ps = [0];
+  for (let i = 0; i < N; i++) ps.push(ps[i] + fileSizes[i]);
+
+  function groupPadding(i, j) {
+    const total = ps[j] - ps[i];
+    const side = Math.max(1, Math.ceil(Math.sqrt(Math.ceil(total / 4))));
+    return side * side * 4 - total;
+  }
+
+  // DP[i] = min padding for first i files
+  const dp = [0];
+  const split = [0]; // split[i] = start of last group for first i files
+  for (let i = 1; i <= N; i++) {
+    let best = Infinity,
+      bestJ = 0;
+    for (let j = 0; j < i; j++) {
+      const val = dp[j] + groupPadding(j, i);
+      if (val < best) {
+        best = val;
+        bestJ = j;
+      }
+    }
+    dp.push(best);
+    split.push(bestJ);
+  }
+
+  // Reconstruct groups
+  const groups = [];
+  let end = N;
+  while (end > 0) {
+    const start = split[end];
+    groups.unshift({ start, end });
+    end = start;
+  }
+
+  // Compute group properties
+  for (const g of groups) {
+    const total = ps[g.end] - ps[g.start];
+    const side = Math.max(1, Math.ceil(Math.sqrt(Math.ceil(total / 4))));
+    g.totalSize = total;
+    g.side = side;
+    g.stripSize = side * side * 4;
+  }
+
+  return groups;
+}
+
 export function precomputeLayout(files) {
   const N = files.length;
   const enc = new TextEncoder();
   const NL = files.map((f) => enc.encode(f.name).length);
   const fileSizes = files.map((f) => f.size);
 
-  // 数据页像素尺寸
-  const S = files.map((f) => {
-    const side = Math.max(1, Math.ceil(Math.sqrt(Math.ceil(f.size / 4))));
-    return side * side * 4;
-  });
+  // ── 最优分组 ──
+  const groups = optimalGroups(fileSizes);
+  const NG = groups.length;
+
+  // 每个文件所属组索引和组内偏移
+  const fileGIdx = [];
+  const fileOffsetInStrip = [];
+  for (let gi = 0; gi < NG; gi++) {
+    const g = groups[gi];
+    let off = 0;
+    for (let fi = g.start; fi < g.end; fi++) {
+      fileGIdx[fi] = gi;
+      fileOffsetInStrip[fi] = off;
+      off += fileSizes[fi];
+    }
+  }
 
   // 索引表大小（含明文头 + META_HEADER + 文件条目）
   const indexSize =
@@ -89,18 +157,21 @@ export function precomputeLayout(files) {
   const ifdOffsets = [ifd0Off];
   const stripOffsets = [strip0Off];
 
-  for (let i = 0; i < N; i++) {
+  for (let gi = 0; gi < NG; gi++) {
     ifdOffsets.push(cursor);
-    cursor += ifdTotal; // IFD header + BPS
+    cursor += ifdTotal;
     stripOffsets.push(cursor);
-    cursor += S[i]; // encrypted payload
+    cursor += groups[gi].stripSize;
   }
 
   return {
     N,
+    NG,
     NL,
     fileSizes,
-    S,
+    groups,
+    fileGIdx,
+    fileOffsetInStrip,
     indexSize,
     idxSide,
     idxStripSize,
