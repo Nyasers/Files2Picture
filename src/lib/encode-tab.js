@@ -50,7 +50,7 @@ function updUI() {
   if (!sel.length) {
     fileList.style.display = "none";
     encBtn.disabled = true;
-    encBtn.textContent = "🎨 生成图片";
+    // encBtn.textContent = "🎨 生成图片";
     return;
   }
 
@@ -147,8 +147,8 @@ function updUI() {
     updUI();
   });
 
-  encBtn.textContent =
-    "🎨 生成图片（" + fmt(t) + " · " + sel.length + " 个文件）";
+  // encBtn.textContent =
+  //   "🎨 生成图片（" + fmt(t) + " · " + sel.length + " 个文件）";
   encBtn.disabled = false;
 
   // 恢复滚动位置
