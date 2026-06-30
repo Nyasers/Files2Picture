@@ -13,6 +13,14 @@ import {
   readPayload,
   decMetaStream,
 } from "./lib/f2p-core.js";
+import {
+  precomputeLayout,
+} from "./lib/tiff-common.js";
+import {
+  buildHeader,
+  buildIFD,
+  buildIndexPixels,
+} from "./lib/tiff-encode.js";
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) =>
@@ -147,14 +155,21 @@ self.addEventListener("fetch", (event) => {
           const stream = new ReadableStream({
             async start(controller) {
               try {
-                const bmp = await readBmpHeader(decJob.bmpFile);
                 let pos = decJob.offset,
                   left = decJob.size,
                   total = decJob.size;
                 while (left > 0 && !job.cancelled) {
                   const ck = (decJob.chunkSize || 64) * 1024;
                   const take = Math.min(left, ck);
-                  const data = await readPayload(bmp, pos, take);
+                  let data;
+                  if (decJob.tiff) {
+                    data = new Uint8Array(
+                      await decJob.bmpFile.slice(pos, pos + take).arrayBuffer(),
+                    );
+                  } else {
+                    const bmp = await readBmpHeader(decJob.bmpFile);
+                    data = await readPayload(bmp, pos, take);
+                  }
                   if (job.cancelled) break;
                   let out = data;
                   if (decJob.key && decJob.nonce)
@@ -162,7 +177,7 @@ self.addEventListener("fetch", (event) => {
                       data,
                       decJob.key,
                       decJob.nonce,
-                      (pos - decJob.offset) / 16,
+                      (decJob.ctrStart || 0) + (pos - decJob.offset) / 16,
                     );
                   if (job.cancelled) break;
                   controller.enqueue(out);
@@ -240,14 +255,21 @@ self.addEventListener("fetch", (event) => {
               const stream = new ReadableStream({
                 async start(controller) {
                   try {
-                    const bmp = await readBmpHeader(group.bmpFile);
                     let pos = fi.offset,
                       left = fi.size,
                       total = fi.size;
                     while (left > 0 && !job.cancelled) {
                       const ck = (group.chunkSize || 64) * 1024;
                       const take = Math.min(left, ck);
-                      const data = await readPayload(bmp, pos, take);
+                      let data;
+                      if (fi.tiff) {
+                        data = new Uint8Array(
+                          await group.bmpFile.slice(pos, pos + take).arrayBuffer(),
+                        );
+                      } else {
+                        const bmp = await readBmpHeader(group.bmpFile);
+                        data = await readPayload(bmp, pos, take);
+                      }
                       if (job.cancelled) break;
                       let out = data;
                       if (group.key && fi.nonce)
@@ -255,7 +277,7 @@ self.addEventListener("fetch", (event) => {
                           data,
                           group.key,
                           fi.nonce,
-                          (pos - fi.offset) / 16,
+                          (fi.ctrStart || 0) + (pos - fi.offset) / 16,
                         );
                       if (job.cancelled) break;
                       controller.enqueue(out);
@@ -334,6 +356,8 @@ async function handleDecodeStreamPrepare(event, msg) {
     name,
     keyRaw,
     chunkSize = 64,
+    ctrStart = 0,
+    tiff = false,
   } = msg;
   if (!jobId) return;
   try {
@@ -355,6 +379,8 @@ async function handleDecodeStreamPrepare(event, msg) {
       nonce: nonce ? new Uint8Array(nonce) : null,
       name,
       chunkSize,
+      ctrStart,
+      tiff,
     });
     if (event.source)
       event.source.postMessage({ type: "decode-stream-ready", jobId, name });
@@ -496,7 +522,7 @@ async function runEncode(event, msg) {
     totalFiles: files.length,
     currentFile: "",
     label: files.length + " 个文件编码中…",
-    filename: msg.filename || "F2P_export.bmp",
+    filename: msg.filename || "F2P_export.tif",
   };
   jobs.set(jobId, job);
   postToClients({ type: "job-new", jobId, ...job });
@@ -529,61 +555,60 @@ async function runEncode(event, msg) {
   pendingStreams.delete(jobId);
 
   try {
-    const flags = nameEnc ? 1 : 0;
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const encKey = await deriveEncKey(password, salt, 10000);
-    let ms = 33,
-      ds = 0;
-    for (const f of files) {
-      const nl = new TextEncoder().encode(f.name).length;
-      ms += 2 + nl + 8 + 12 + (flags ? 12 : 0);
-      ds += f.size;
-    }
 
-    const bmp = buildBMPStream(ms + ds, (row) => push(row));
-    const { w, h, fs } = bmp;
-    push(bmp.header);
+    // 预计算布局
+    const layout = precomputeLayout(
+      files.map((f) => ({ name: f.name, size: f.size })),
+    );
 
-    bmp.w32(0x46325033);
-    bmp.w32(files.length);
-    bmp.w8(flags);
-    bmp.wChunk(salt);
-    bmp.w32(10000);
-
-    const magicEnc = await aesEncrypt(
-      new Uint8Array([0x46, 0x32, 0x50, 0x33]),
+    // 加密 magic_check: "F2P4" (salt[0..12], CTR block 0)
+    const encMagic = await aesEncrypt(
+      new Uint8Array([0x46, 0x32, 0x50, 0x34]),
       encKey,
       salt.subarray(0, 12),
       0,
     );
-    bmp.wChunk(magicEnc);
 
-    const fileNonces = [];
-    for (const f of files) {
-      const nd = crypto.getRandomValues(new Uint8Array(12));
-      const nb = new TextEncoder().encode(f.name);
-      if (flags) {
-        const nn = crypto.getRandomValues(new Uint8Array(12));
-        const en = await aesEncrypt(nb, encKey, nn, 0);
-        bmp.w16(nb.length);
-        bmp.wChunk(en);
-        bmp.w64(f.size);
-        bmp.wChunk(nn);
-        bmp.wChunk(nd);
-      } else {
-        bmp.w16(nb.length);
-        bmp.wChunk(nb);
-        bmp.w64(f.size);
-        bmp.wChunk(nd);
-      }
-      fileNonces.push(nd);
+    // 构建索引像素（含 salt, iter, encMagic, 文件名明文, nonce）
+    const fileNames = files.map(f => f.name);
+    const { pixels: indexPixels, fileNonces } = buildIndexPixels(
+      layout, fileNames, salt, 10000, encMagic);
+
+    // 构建 IFD 块
+    const header = buildHeader(layout.H);
+    const ifd0 = buildIFD(
+      layout.ifdOffsets[0],
+      layout.N > 0 ? layout.ifdOffsets[1] : 0,
+      layout.idxSide, layout.idxSide,
+      layout.stripOffsets[0], layout.idxStripSize);
+
+    const ifdBufs = [];
+    for (let i = 0; i < layout.N; i++) {
+      const wi = Math.max(1, Math.ceil(Math.sqrt(Math.ceil(layout.S[i] / 4))));
+      const nextOff = i + 1 < layout.N ? layout.ifdOffsets[i + 2] : 0;
+      const buf = buildIFD(
+        layout.ifdOffsets[i + 1], nextOff,
+        wi, wi,
+        layout.stripOffsets[i + 1], layout.S[i]);
+      ifdBufs.push(buf);
     }
 
+    // 流式写入
+    push(header);
+    push(ifd0);
+    push(indexPixels); // IFD#0 strip
+
+    // 写入各文件
     const ck = chunkSize * 1024;
-    let processed = 0;
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i],
-        nd = fileNonces[i];
+    let totalBytes = 0;
+    for (let i = 0; i < layout.N; i++) {
+      const f = files[i];
+      const nd = fileNonces.subarray(i * 12, (i + 1) * 12);
+
+      push(ifdBufs[i]); // 数据 IFD
+
       job.currentFile = f.name;
       let pos = 0;
       while (pos < f.size) {
@@ -591,26 +616,21 @@ async function runEncode(event, msg) {
         const end = Math.min(pos + ck, f.size);
         const buf = await readChunk(f, pos, end, ck);
         const enc = await aesEncrypt(buf, encKey, nd, pos / 16);
-        bmp.wChunk(enc);
+        push(enc);
         pos = end;
-        const done = processed + pos;
-        const pct = Math.min(100, ((done / ds) * 100) | 0);
+        const done = totalBytes + pos;
+        const allSizes = layout.fileSizes.reduce((a, b) => a + b, 0);
+        const pct = allSizes > 0 ? Math.min(100, (done / allSizes) * 100 | 0) : 100;
         job.progress = pct;
-        postToClients({
-          type: "job-progress",
-          jobId,
-          progress: pct,
-          done,
-          total: ds,
-          currentFile: f.name,
-        });
+        postToClients({ type: "job-progress", jobId, progress: pct, done, total: allSizes, currentFile: f.name });
       }
-      processed += f.size;
+      totalBytes += f.size;
+
+      const paddingSize = layout.S[i] - layout.fileSizes[i];
+      if (paddingSize > 0) push(new Uint8Array(paddingSize));
     }
 
     if (job.cancelled) throw Error("cancel");
-    bmp.pad();
-    await bmp.flushAll();
     closeStream();
 
     job.status = "done";
@@ -620,11 +640,11 @@ async function runEncode(event, msg) {
       jobId,
       kind: "encode",
       filename: job.filename,
-      size: fs,
+      size: layout.totalSize,
     });
     try {
       self.registration.showNotification("F2P 编码完成", {
-        body: job.label + " · " + fmt(fs),
+        body: job.label + " · " + fmt(layout.totalSize),
         icon: "/favicon.png",
         tag: "f2p-" + jobId,
         data: { jobId },

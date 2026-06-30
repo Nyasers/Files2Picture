@@ -3,6 +3,7 @@
 // ═══════════════════════════════════════════════
 
 import { fmt } from "./f2p-core.js";
+import { precomputeLayout } from "./tiff-common.js";
 import { $, toast, sendToSW, waitForSw, postViaIframe } from "./sw-client.js";
 import { switchTab } from "./ui-shell.js";
 
@@ -88,11 +89,7 @@ function updUI() {
       rmF(+this.dataset.idx);
     });
   });
-  const n = Math.max(
-    4,
-    Math.ceil(Math.sqrt(Math.ceil((t + sel.length * 30 + 4) / 4))),
-  );
-  encBtn.textContent = "🎨 生成图片（" + fmt(t) + "~" + n + "×" + n + "）";
+  encBtn.textContent = "🎨 生成图片（" + fmt(t) + " · " + sel.length + " 个文件）";
   encBtn.disabled = false;
 }
 
@@ -147,22 +144,12 @@ encBtn.addEventListener("click", async () => {
   const files = sel.slice();
   const jobId = Date.now() + "";
 
-  // 预计算 BMP 总尺寸（32-bit：4 bytes/px，无行填充）
-  const flags = nameEnc ? 1 : 0;
-  let ms = 33,
-    ds = 0;
-  for (const f of files) {
-    const nl = new TextEncoder().encode(f.name).length;
-    ms += 2 + nl + 8 + 12 + (flags ? 12 : 0);
-    ds += f.size;
-  }
-  const ps = 8 + ms + ds;
-  const sz = Math.max(4, Math.ceil(Math.sqrt(Math.ceil(ps / 4))));
-  const st = sz * 4;
-  const rp = 0;
-  const rb = st;
-  const fs = 54 + rb * sz;
-  const fn = "F2P_" + jobId + ".bmp";
+  // 预计算 BigTIFF 布局 + 总尺寸
+  const layout = precomputeLayout(
+    files.map((f) => ({ name: f.name, size: f.size })),
+  );
+  const fs = layout.totalSize;
+  const fn = "F2P_" + jobId + ".tif";
 
   // 预注册编码流
   sendToSW({

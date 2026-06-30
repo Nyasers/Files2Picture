@@ -89,6 +89,27 @@ export async function readChunk(file, start, end, trySize) {
   }
 }
 
+// ── 容器格式检测 ──
+
+/**
+ * 检测容器文件类型
+ * @param {Blob} file
+ * @returns {Promise<string|null>} 'bmp' | 'bigtiff' | null
+ */
+export async function detectContainerType(file) {
+  try {
+    const buf = await file.slice(0, 4).arrayBuffer();
+    const dv = new DataView(buf);
+    const b0 = dv.getUint8(0), b1 = dv.getUint8(1), b2 = dv.getUint8(2), b3 = dv.getUint8(3);
+    if (b0 === 0x42 && b1 === 0x4d) return "bmp";
+    if (b0 === 0x49 && b1 === 0x49 && b2 === 0x2a && b3 === 0x00) return "tiff";
+    if (b0 === 0x4d && b1 === 0x4d && b2 === 0x00 && b3 === 0x2a) return "tiff";
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // ── BMP 编码（F2P3：32-bit BGRA，A通道参与数据）──
 
 export function buildBMPStream(payloadSize, onRow) {
