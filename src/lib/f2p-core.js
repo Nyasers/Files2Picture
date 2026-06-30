@@ -106,19 +106,21 @@ export async function detectContainerType(file) {
 export function buildBMPStream(payloadSize, onRow) {
   const BPP = 4;
   const ps = 8 + payloadSize;
-  const np = Math.ceil(ps / BPP);
-  const sz = Math.min(0x7fffffff, Math.max(4, Math.ceil(Math.sqrt(np))));
-  const w = sz,
-    h = sz;
-  const rb = w * BPP;
-  const pds = rb * h;
-  const fs = 14 + 40 + pds;
+  // 最大完全平方数 k²，满足 k²×4 ≤ ps（零填充浪费）
+  const k = Math.max(1, Math.floor(Math.sqrt(Math.floor(ps / BPP))));
+  const w = k,
+    h = k;
+  const rb = w * BPP; // 行字节数（32bit 无 padding）
+  const pds = rb * h; // 像素区大小 = k² × 4
+  const tailSize = ps - pds; // 尾巴字节数
+  const bfSize = 14 + 40 + pds; // BMP header 声明的文件大小（54 + 4k²）
+  const fs = 14 + 40 + ps; // 实际文件大小（54 + ps）
 
   const hdr = new ArrayBuffer(54);
   const v = new DataView(hdr);
   v.setUint8(0, 0x42);
   v.setUint8(1, 0x4d);
-  v.setUint32(2, fs > 0xffffffff ? 0xffffffff : fs, true);
+  v.setUint32(2, bfSize > 0xffffffff ? 0xffffffff : bfSize, true);
   v.setUint16(6, 0, true);
   v.setUint16(8, 0, true);
   v.setUint32(10, 54, true);
@@ -139,6 +141,8 @@ export function buildBMPStream(payloadSize, onRow) {
     rowIdx = 0;
   let bp = 0;
   let writeChain = Promise.resolve();
+  const tailBuf = new Uint8Array(tailSize);
+  let tailOff = 0;
 
   function flushRow() {
     if (onRow) {
@@ -160,24 +164,34 @@ export function buildBMPStream(payloadSize, onRow) {
       let i = 0,
         n = arr.length;
       while (i < n && bp < ps) {
-        if (bp % BPP === 0 && i + BPP <= n && bp + BPP <= ps) {
-          const off = col * BPP;
-          // BGRA 原生：B=0, G=1, R=2, A=3
-          rowBuf[off] = arr[i];
-          rowBuf[off + 1] = arr[i + 1];
-          rowBuf[off + 2] = arr[i + 2];
-          rowBuf[off + 3] = arr[i + 3];
-          i += BPP;
-          bp += BPP;
-          col++;
+        if (bp < pds) {
+          // ── 像素区内：逐像素写入 ──
+          if (bp % BPP === 0 && i + BPP <= n && bp + BPP <= pds) {
+            const off = col * BPP;
+            // BGRA 原生：B=0, G=1, R=2, A=3
+            rowBuf[off] = arr[i];
+            rowBuf[off + 1] = arr[i + 1];
+            rowBuf[off + 2] = arr[i + 2];
+            rowBuf[off + 3] = arr[i + 3];
+            i += BPP;
+            bp += BPP;
+            col++;
+          } else {
+            const off = col * BPP;
+            rowBuf[off + (bp % BPP)] = arr[i];
+            i++;
+            bp++;
+            if (bp % BPP === 0) col++;
+          }
+          if (col >= w) flushRow();
         } else {
-          const off = col * BPP;
-          rowBuf[off + (bp % BPP)] = arr[i];
-          i++;
-          bp++;
-          if (bp % BPP === 0) col++;
+          // ── 尾巴区：直接缓存，不行对齐 ──
+          const take = Math.min(n - i, ps - bp);
+          tailBuf.set(arr.subarray(i, i + take), tailOff);
+          tailOff += take;
+          i += take;
+          bp += take;
         }
-        if (col >= w) flushRow();
       }
     },
     w8(v) {
@@ -206,17 +220,20 @@ export function buildBMPStream(payloadSize, onRow) {
       );
     },
     pad() {
-      if (bp < ps) this.wChunk(new Uint8Array(ps - bp));
+      // 清尾行
       if (col > 0 && onRow) {
         const copy = new Uint8Array(rowBuf);
         writeChain = writeChain.then(() => onRow(copy));
         rowIdx++;
       }
+      // 填充剩余空行（仅当 pds > ps 时触发，但新方案 pds ≤ ps 不会走到这里）
       while (rowIdx < h && onRow) {
         const copy = new Uint8Array(rb);
         writeChain = writeChain.then(() => onRow(copy));
         rowIdx++;
       }
+      // 返回尾巴数据，调用者自行压入流
+      return tailBuf;
     },
     flushAll() {
       return writeChain;
@@ -254,11 +271,21 @@ export async function readPayload(m, bp, len, chMap) {
   if (len === 0) return out;
   const { w, po, rb, blob } = m;
 
-  const pxStart = (bp / bps) | 0;
+  // 32bit 无 channel mapping：像素区 + 尾巴连续存在文件中，线性读即可
+  if (bpp === 32 && (!chMap || chMap.length === 0)) {
+    try {
+      return new Uint8Array(
+        await blob.slice(po + bp, po + bp + len).arrayBuffer(),
+      );
+    } catch {
+      throw new Error("读取 BMP 像素/尾巴数据失败");
+    }
+  }
+
+  // 旧格式（24bit 或 channel mapping）：只能读像素区内
   const pxEnd = ((bp + len - 1) / bps) | 0;
-  const rowStart = (pxStart / w) | 0;
   const rowEnd = (pxEnd / w) | 0;
-  const fileStart = po + rowStart * rb;
+  const fileStart = po + 0;
   const fileEnd = po + (rowEnd + 1) * rb;
 
   let buf;
@@ -273,10 +300,9 @@ export async function readPayload(m, bp, len, chMap) {
     const pOff = bp + off;
     const pxIdx = (pOff / bps) | 0;
     const row = (pxIdx / w) | 0;
-    const relRow = row - rowStart;
     const pInRow = pxIdx % w;
     const chOff = useMap ? chMap[pOff % bps] : pOff % bps;
-    out[off] = buf[relRow * rb + pInRow * bps + chOff];
+    out[off] = buf[row * rb + pInRow * bps + chOff];
   }
   return out;
 }

@@ -598,7 +598,8 @@ async function runEncode(event, msg) {
     }
 
     if (job.cancelled) throw Error("cancel");
-    bmp.pad();
+    const tail = bmp.pad();
+    if (tail && tail.length) push(tail);
     await bmp.flushAll();
     closeStream();
 

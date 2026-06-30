@@ -18,9 +18,9 @@ export function precomputeBmp(files) {
     ds += f.size;
   }
   const ps = 8 + ms + ds;
-  const sz = Math.max(4, Math.ceil(Math.sqrt(Math.ceil(ps / 4))));
-  const fs = 54 + sz * sz * 4;
-  return { ms, ds, ps, sz, fs };
+  const k = Math.max(1, Math.floor(Math.sqrt(Math.floor(ps / 4))));
+  const fs = 54 + ps; // 真实文件大小（Content-Length 用）
+  return { ms, ds, ps, sz: k, fs };
 }
 
 /**
