@@ -1,7 +1,7 @@
 {
   "name": "f2p",
   "version": "1.0.0",
-  "description": "打包隐写不压缩 — 纯前端 BMP 打包工具",
+  "description": "BMP 直写直读，文件隐写不压缩",
   "private": true,
   "scripts": {
     "build": "rspack build --config rspack.config.cjs",
