@@ -110,7 +110,7 @@ export function postViaIframe(url, fields) {
   const handler = (e) => {
     if (e.data.type === "download-started" && e.data.jobId === jobId) {
       navigator.serviceWorker.removeEventListener("message", handler);
-      setTimeout(() => f.remove(), 50);
+      setTimeout(() => f.remove(), 0x0721);
     }
   };
   navigator.serviceWorker.addEventListener("message", handler);
