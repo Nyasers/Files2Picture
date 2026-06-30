@@ -199,9 +199,17 @@ label {
   padding: 5px 8px;
   border-radius: 4px;
   transition: background 0.15s;
+  cursor: grab;
 }
 .file-item:hover {
   background: #1e1e1e;
+}
+.file-item.dragging {
+  opacity: 0.4;
+}
+.file-item.drag-over {
+  background: #1a1a2e;
+  border-top: 2px solid #4a4aff;
 }
 .file-item .name {
   flex: 1;
@@ -236,6 +244,59 @@ label {
   margin-top: 4px;
   color: #7a7aff;
   font-size: 0.78rem;
+}
+
+.enc-sort-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid #2a2a2a;
+  font-size: 0.75rem;
+  color: #666;
+}
+.enc-sort-header > span:first-child {
+  width: 24px;
+  flex-shrink: 0;
+  text-align: center;
+}
+.enc-sort-header > span:nth-child(2) {
+  flex: 1;
+}
+.enc-sort-header > span:nth-child(3) {
+  width: 70px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.enc-sort-header .sort-btn {
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 4px;
+  border-radius: 3px;
+  transition: color 0.15s;
+}
+.enc-sort-header .sort-btn:hover {
+  color: #aaa;
+}
+
+.enc-btn-col {
+  width: 28px;
+  flex-shrink: 0;
+}
+
+.file-item .idx {
+  width: 24px;
+  flex-shrink: 0;
+  text-align: center;
+  color: #555;
+  font-size: 0.78rem;
+}
+.file-item .file-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
 }
 
 .btn-group {
@@ -432,13 +493,30 @@ label {
 
 .dec-file-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 8px;
   padding: 10px 8px 6px;
 }
-.dec-file-summary {
+.select-all-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: #aaa;
+  margin: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.select-all-label input {
+  accent-color: #4a4aff;
+}
+.dec-file-summary,
+.dec-selected-count {
   font-size: 0.8rem;
   color: #888;
+}
+.dec-selected-count {
+  margin-left: auto;
 }
 .enc-file-header {
   display: flex;

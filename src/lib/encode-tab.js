@@ -39,8 +39,10 @@ function addFs(fs) {
   if (a) toast("📎 已添加 " + a + " 个");
 }
 
-function rmF(i) {
-  sel.splice(i, 1);
+function mvF(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= sel.length) return;
+  [sel[i], sel[j]] = [sel[j], sel[i]];
   updUI();
 }
 
@@ -51,6 +53,11 @@ function updUI() {
     encBtn.textContent = "🎨 生成图片";
     return;
   }
+
+  // 保存滚动位置
+  const oldBody = document.getElementById("encFileBody");
+  const scrollTop = oldBody ? oldBody.scrollTop : 0;
+
   const t = sel.reduce((s, f) => s + f.size, 0);
   let e =
     '<div class="enc-file-header"><span class="enc-file-summary">共 ' +
@@ -58,29 +65,95 @@ function updUI() {
     " 个文件 · " +
     fmt(t) +
     "</span></div>" +
-    '<div class="enc-file-body">';
+    '<div class="enc-sort-header">' +
+    "<span>#</span>" +
+    "<span>文件名</span>" +
+    "<span>大小</span>" +
+    '<span class="enc-btn-col"></span>' +
+    "</div>" +
+    '<div class="enc-file-body" id="encFileBody">';
   for (let i = 0; i < sel.length; i++) {
     const n = sel[i];
     e +=
-      '<div class="file-item"><span class="name">' +
-      n.name +
-      '</span><span class="size">' +
-      fmt(n.size) +
-      '</span><button class="file-remove" data-idx="' +
+      '<div class="file-item" draggable="true" data-idx="' +
       i +
-      '">✕</button></div>';
+      '">' +
+      '<span class="idx">' +
+      i +
+      "</span>" +
+      '<span class="name">' +
+      n.name +
+      "</span>" +
+      '<span class="size">' +
+      fmt(n.size) +
+      "</span>" +
+      '<button class="file-remove" data-idx="' +
+      i +
+      '">✕</button>' +
+      "</div>";
   }
   e += "</div>";
   fileList.innerHTML = e;
   fileList.style.display = "block";
+
+  // 删除按钮
   fileList.querySelectorAll(".file-remove").forEach((b) => {
     b.addEventListener("click", function () {
       rmF(+this.dataset.idx);
     });
   });
+
+  // 拖动排序
+  const body = document.getElementById("encFileBody");
+  let dragIdx = null;
+  body.addEventListener("dragstart", (ev) => {
+    const item = ev.target.closest(".file-item");
+    if (!item) return;
+    dragIdx = +item.dataset.idx;
+    item.classList.add("dragging");
+    ev.dataTransfer.effectAllowed = "move";
+  });
+  body.addEventListener("dragend", (ev) => {
+    ev.target.closest(".file-item")?.classList.remove("dragging");
+    body
+      .querySelectorAll(".file-item")
+      .forEach((el) => el.classList.remove("drag-over"));
+    dragIdx = null;
+  });
+  body.addEventListener("dragover", (ev) => {
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = "move";
+    const target = ev.target.closest(".file-item");
+    if (!target) return;
+    const overIdx = +target.dataset.idx;
+    if (overIdx === dragIdx) return;
+    // 标记拖入位置
+    body
+      .querySelectorAll(".file-item")
+      .forEach((el) => el.classList.remove("drag-over"));
+    target.classList.add("drag-over");
+  });
+  body.addEventListener("dragleave", (ev) => {
+    ev.target.closest(".file-item")?.classList.remove("drag-over");
+  });
+  body.addEventListener("drop", (ev) => {
+    ev.preventDefault();
+    const target = ev.target.closest(".file-item");
+    if (!target || dragIdx === null) return;
+    const dropIdx = +target.dataset.idx;
+    if (dropIdx === dragIdx) return;
+    const [item] = sel.splice(dragIdx, 1);
+    sel.splice(dropIdx, 0, item);
+    updUI();
+  });
+
   encBtn.textContent =
     "🎨 生成图片（" + fmt(t) + " · " + sel.length + " 个文件）";
   encBtn.disabled = false;
+
+  // 恢复滚动位置
+  const newBody = document.getElementById("encFileBody");
+  if (newBody) newBody.scrollTop = scrollTop;
 }
 
 encInput.addEventListener("change", function () {

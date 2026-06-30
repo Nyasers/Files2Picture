@@ -9,10 +9,7 @@
   <body>
     <div class="c">
       <h1>📦 F2P <small>Files to Picture</small></h1>
-      <div class="sub">
-        打包隐写不压缩，文件直写 BMP 像素。任务在 Service Worker
-        中运行，可刷新页面。
-      </div>
+      <div class="sub">BMP 直写直读，文件隐写不压缩。</div>
 
       <div class="toast-container" id="toastContainer"></div>
 
@@ -120,7 +117,9 @@
         </div>
       </div>
 
-      <div class="note">BMP 直写直读，编解码在 Service Worker 中运行。</div>
+      <div class="note">
+        编解码在 Service Worker 中运行，页面刷新不影响任务。
+      </div>
     </div>
   </body>
 </html>

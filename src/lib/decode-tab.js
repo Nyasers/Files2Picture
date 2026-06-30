@@ -110,16 +110,37 @@ decBtn.addEventListener("click", async () => {
 // ── 渲染文件列表 ──
 // 以下保持不变
 
+function updateSelectionStats() {
+  const cbs = document.querySelectorAll(".dec-file-cb");
+  let n = 0,
+    s = 0;
+  cbs.forEach((cb) => {
+    if (cb.checked) {
+      n++;
+      s += decEntries[+cb.dataset.idx].size;
+    }
+  });
+  const el = document.getElementById("decSelectedCount");
+  if (el) el.textContent = "已选 " + n + " 个 · " + fmt(s);
+  const allCb = document.getElementById("selectAllDec");
+  if (allCb) allCb.checked = n === cbs.length;
+}
+
 function renderDecFiles(ent) {
   const totalSize = ent.reduce((s, f) => s + f.size, 0);
   let h =
-    '<div class="dec-file-header"><span class="dec-file-summary">共 ' +
+    '<div class="dec-file-header"><label class="select-all-label"><input type="checkbox" id="selectAllDec" checked> 全选</label>' +
+    '<span class="dec-file-summary" id="decSummary">共 ' +
     ent.length +
-    " 个文件 · " +
+    " 个 · " +
     fmt(totalSize) +
-    '</span><button class="btn-batch-dl" id="batchDlBtn">📥 下载选中</button></div>' +
-    '<div class="dec-file-body">' +
-    '<div class="file-list-select-all"><label><input type="checkbox" id="selectAllDec" checked> 全选</label></div>';
+    '</span><span class="dec-selected-count" id="decSelectedCount">已选 ' +
+    ent.length +
+    " 个 · " +
+    fmt(totalSize) +
+    "</span>" +
+    '<button class="btn-batch-dl" id="batchDlBtn">📥 下载选中</button></div>' +
+    '<div class="dec-file-body">';
   for (let i = 0; i < ent.length; i++) {
     const f = ent[i];
     h +=
@@ -145,7 +166,14 @@ function renderDecFiles(ent) {
       document
         .querySelectorAll(".dec-file-cb")
         .forEach((cb) => (cb.checked = this.checked));
+      updateSelectionStats();
     });
+
+  document.querySelectorAll(".dec-file-cb").forEach((cb) => {
+    cb.addEventListener("change", updateSelectionStats);
+  });
+
+  updateSelectionStats();
 
   document
     .getElementById("batchDlBtn")
