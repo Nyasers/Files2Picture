@@ -20,13 +20,16 @@ export const T_EXTRA_SAMPLES = 338;
 // ── 类型 ──
 export const TYP_SHORT = 3;
 export const TYP_LONG = 4;
-export const typeSize = { 3:2, 4:4 };
+export const typeSize = { 3: 2, 4: 4 };
 
 // ── 索引表格式 ──
-// Magic(4) + reserved(4) + N(4) + salt(16) + iter(4) + magic_check(4) = 36
-// + per-file[IFDoff(4)+nameLen(2)+name(NL)+size(4)+nonce(12)]
+// Magic(4) + salt(16) + iter(4) + metaNonce(12) = 36 明文头
+// 其后全部加密: N(4) + encMagic(4) + reserved(4) + per-file[...]
 export const INDEX_HEADER = 36;
-export function indexEntrySize(nl) { return 4 + 2 + nl + 4 + 12; }
+export const META_HEADER = 12; // N(4) + encMagic(4) + reserved(4)
+export function indexEntrySize(nl) {
+  return 4 + 2 + nl + 4 + 12;
+}
 
 // ── IFD 常量 ──
 // IFD: entryCount(2B) + entries(12B) + nextIFD(4B)
@@ -37,11 +40,17 @@ export const STD_HDR = 2 + STD_N * IFD_ENTRY + 4; // = 126
 export const STD_EXT = 8;
 
 // ── 工具 ──
-export function w16(dv, o, v) { dv.setUint16(o, v, true); }
-export function w32(dv, o, v) { dv.setUint32(o, v, true); }
+export function w16(dv, o, v) {
+  dv.setUint16(o, v, true);
+}
+export function w32(dv, o, v) {
+  dv.setUint32(o, v, true);
+}
 export function we(dv, o, tag, type, cnt, val) {
-  w16(dv, o, tag); w16(dv, o+2, type);
-  w32(dv, o+4, cnt); w32(dv, o+8, val);
+  w16(dv, o, tag);
+  w16(dv, o + 2, type);
+  w32(dv, o + 4, cnt);
+  w32(dv, o + 8, val);
 }
 
 // ── precomputeLayout ──
@@ -49,19 +58,21 @@ export function we(dv, o, tag, type, cnt, val) {
 export function precomputeLayout(files) {
   const N = files.length;
   const enc = new TextEncoder();
-  const NL = files.map(f => enc.encode(f.name).length);
-  const fileSizes = files.map(f => f.size);
+  const NL = files.map((f) => enc.encode(f.name).length);
+  const fileSizes = files.map((f) => f.size);
 
   // 数据页像素尺寸
-  const S = files.map(f => {
+  const S = files.map((f) => {
     const side = Math.max(1, Math.ceil(Math.sqrt(Math.ceil(f.size / 4))));
     return side * side * 4;
   });
 
   // 索引表大小
-  const indexSize = N > 0
-    ? INDEX_HEADER + files.reduce((s, _, i) => s + indexEntrySize(NL[i]), 0)
-    : INDEX_HEADER;
+  const indexSize =
+    N > 0
+      ? INDEX_HEADER + files.reduce((s, _, i) => s + indexEntrySize(NL[i]), 0)
+      : INDEX_HEADER;
+  // IFD#0 像素尺寸：至少 4x4，让看图软件能看到东西
   const idxSide = Math.max(4, Math.ceil(Math.sqrt(Math.ceil(indexSize / 4))));
   const idxStripSize = idxSide * idxSide * 4;
 
@@ -83,6 +94,18 @@ export function precomputeLayout(files) {
     cursor += S[i]; // encrypted payload
   }
 
-  return { N, NL, fileSizes, S, indexSize, idxSide, idxStripSize,
-    ifdTotal, H, ifdOffsets, stripOffsets, totalSize: cursor };
+  return {
+    N,
+    NL,
+    fileSizes,
+    S,
+    indexSize,
+    idxSide,
+    idxStripSize,
+    ifdTotal,
+    H,
+    ifdOffsets,
+    stripOffsets,
+    totalSize: cursor,
+  };
 }

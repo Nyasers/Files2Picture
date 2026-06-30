@@ -13,14 +13,8 @@ import {
   readPayload,
   decMetaStream,
 } from "./lib/f2p-core.js";
-import {
-  precomputeLayout,
-} from "./lib/tiff-common.js";
-import {
-  buildHeader,
-  buildIFD,
-  buildIndexPixels,
-} from "./lib/tiff-encode.js";
+import { precomputeLayout } from "./lib/tiff-common.js";
+import { buildHeader, buildIFD, buildIndexPixels } from "./lib/tiff-encode.js";
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) =>
@@ -264,7 +258,9 @@ self.addEventListener("fetch", (event) => {
                       let data;
                       if (fi.tiff) {
                         data = new Uint8Array(
-                          await group.bmpFile.slice(pos, pos + take).arrayBuffer(),
+                          await group.bmpFile
+                            .slice(pos, pos + take)
+                            .arrayBuffer(),
                         );
                       } else {
                         const bmp = await readBmpHeader(group.bmpFile);
@@ -563,35 +559,40 @@ async function runEncode(event, msg) {
       files.map((f) => ({ name: f.name, size: f.size })),
     );
 
-    // 加密 magic_check: "F2P4" (salt[0..12], CTR block 0)
-    const encMagic = await aesEncrypt(
+    // 构建索引像素（含 salt, iter, encMagic="F2P4", 文件名明文, nonce）
+    const fileNames = files.map((f) => f.name);
+    const { pixels: indexPixels, payloadNonces } = await buildIndexPixels(
+      layout,
+      fileNames,
+      salt,
+      10000,
       new Uint8Array([0x46, 0x32, 0x50, 0x34]),
       encKey,
-      salt.subarray(0, 12),
-      0,
     );
-
-    // 构建索引像素（含 salt, iter, encMagic, 文件名明文, nonce）
-    const fileNames = files.map(f => f.name);
-    const { pixels: indexPixels, fileNonces } = buildIndexPixels(
-      layout, fileNames, salt, 10000, encMagic);
 
     // 构建 IFD 块
     const header = buildHeader(layout.H);
     const ifd0 = buildIFD(
       layout.ifdOffsets[0],
       layout.N > 0 ? layout.ifdOffsets[1] : 0,
-      layout.idxSide, layout.idxSide,
-      layout.stripOffsets[0], layout.idxStripSize);
+      layout.idxSide,
+      layout.idxSide,
+      layout.stripOffsets[0],
+      layout.idxStripSize,
+    );
 
     const ifdBufs = [];
     for (let i = 0; i < layout.N; i++) {
       const wi = Math.max(1, Math.ceil(Math.sqrt(Math.ceil(layout.S[i] / 4))));
       const nextOff = i + 1 < layout.N ? layout.ifdOffsets[i + 2] : 0;
       const buf = buildIFD(
-        layout.ifdOffsets[i + 1], nextOff,
-        wi, wi,
-        layout.stripOffsets[i + 1], layout.S[i]);
+        layout.ifdOffsets[i + 1],
+        nextOff,
+        wi,
+        wi,
+        layout.stripOffsets[i + 1],
+        layout.S[i],
+      );
       ifdBufs.push(buf);
     }
 
@@ -605,7 +606,7 @@ async function runEncode(event, msg) {
     let totalBytes = 0;
     for (let i = 0; i < layout.N; i++) {
       const f = files[i];
-      const nd = fileNonces.subarray(i * 12, (i + 1) * 12);
+      const nd = payloadNonces.subarray(i * 12, (i + 1) * 12);
 
       push(ifdBufs[i]); // 数据 IFD
 
@@ -620,9 +621,17 @@ async function runEncode(event, msg) {
         pos = end;
         const done = totalBytes + pos;
         const allSizes = layout.fileSizes.reduce((a, b) => a + b, 0);
-        const pct = allSizes > 0 ? Math.min(100, (done / allSizes) * 100 | 0) : 100;
+        const pct =
+          allSizes > 0 ? Math.min(100, ((done / allSizes) * 100) | 0) : 100;
         job.progress = pct;
-        postToClients({ type: "job-progress", jobId, progress: pct, done, total: allSizes, currentFile: f.name });
+        postToClients({
+          type: "job-progress",
+          jobId,
+          progress: pct,
+          done,
+          total: allSizes,
+          currentFile: f.name,
+        });
       }
       totalBytes += f.size;
 

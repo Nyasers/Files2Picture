@@ -15,6 +15,7 @@ import {
   readIFD,
   readExternal,
   detectTiff,
+  parseFileEntries,
   decodeContainer as tiffDecodeContainer,
 } from "./tiff-decode.js";
 import { $, toast, sendToSW, waitForSw, postViaIframe } from "./sw-client.js";
@@ -132,18 +133,51 @@ decBtn.addEventListener("click", async () => {
     const type = await detectContainerType(decFile);
 
     if (type === "tiff") {
-      // ── TIFF 解码路径（零私有 tag，元数据在像素中）──
       const tiff = await tiffDecodeContainer(decFile);
       if (!tiff) throw Error("无法解析 TIFF 容器");
 
-      // 文件名已在索引表中解密，只需验证密码
       const key = await deriveEncKey(pwd, tiff.salt, tiff.iter, true);
-      const md = await aesDecrypt(tiff.magicCheck, key, tiff.salt.subarray(0, 12), 0);
-      if (md[0] !== 0x46 || md[1] !== 0x32 || md[2] !== 0x50 || md[3] !== 0x34)
+
+      // 全文解密元数据块（metaNonce 加密整块）
+      const fullDec = await aesDecrypt(
+        tiff.encryptedBlock,
+        key,
+        tiff.metaNonce,
+        0,
+      );
+
+      // 校验密码：N(4) 之后是 encMagic(4)，metaNonce 解密后直接验证
+      if (
+        fullDec[4] !== 0x46 ||
+        fullDec[5] !== 0x32 ||
+        fullDec[6] !== 0x50 ||
+        fullDec[7] !== 0x34
+      )
         throw Error("密码错误");
 
-      // 统一 entries 接口
-      const ent = tiff.entries.map((e) => ({
+      // 从解密后的元数据解析文件条目
+      const parsed = parseFileEntries(fullDec);
+      if (!parsed) throw Error("数据结构损坏");
+
+      // 补齐 strip 偏移
+      const le = tiff.endian || 0x49;
+      for (const e of parsed.entries) {
+        const fIfd = await readIFD(decFile, e.ifdOffset, le);
+        const ft = fIfd.tags;
+        const getVal = (tag) => {
+          const t = ft.get(tag);
+          if (!t || !t.inline) return 0;
+          return new DataView(
+            t.data.buffer,
+            t.data.byteOffset,
+            t.data.length,
+          ).getUint32(0, true);
+        };
+        e.stripOffset = getVal(273);
+        e.stripSize = getVal(279);
+      }
+
+      const ent = parsed.entries.map((e) => ({
         name: e.name,
         size: e.size,
         nonceData: e.nonce,
