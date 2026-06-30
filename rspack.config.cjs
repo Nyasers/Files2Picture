@@ -41,7 +41,6 @@ module.exports = [
         template: "./src/index.html",
         favicon: "./src/favicon.png",
         inject: true,
-        minify: !isDev,
       }),
       new rspack.CssExtractRspackPlugin({
         filename: isDev ? "style.css" : "style.[contenthash:8].css",

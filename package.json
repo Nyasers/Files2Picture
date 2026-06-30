@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "build": "rspack build --config rspack.config.cjs",
+    "postbuild": "node scripts/minify-html.mjs",
     "dev": "set NODE_ENV=development && rspack dev --config rspack.config.cjs"
   },
   "devDependencies": {
