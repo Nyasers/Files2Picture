@@ -62,16 +62,17 @@ decInput.addEventListener("change", async function () {
   decKey = null;
   decBmpMeta = null;
   decText.textContent = decFile.name;
+  decHint.textContent = fmt(decFile.size) + " · ";
   decFileList.style.display = "none";
   decBtn.textContent = "🔎 提取";
 
   const info = await quickDetect(decFile);
   if (info) {
-    decHint.textContent = fmt(decFile.size) + " · " + info;
+    decHint.textContent += info;
     decHint.classList.remove("err");
     decBtn.disabled = false;
   } else {
-    decHint.textContent = fmt(decFile.size) + " · ⚠️ 非 F2P 文件";
+    decHint.textContent += "非 F2P 文件";
     decHint.classList.add("err");
     decBtn.disabled = true;
   }
