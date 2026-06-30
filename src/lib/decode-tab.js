@@ -2,22 +2,8 @@
 // 解码 Tab — 图片选择、元信息解析、提取下载
 // ═══════════════════════════════════════════════
 
-import {
-  fmt,
-  readBmpHeader,
-  readPayload,
-  decMetaStream,
-  deriveEncKey,
-  aesDecrypt,
-  detectContainerType,
-} from "./f2p-core.js";
-import {
-  readIFD,
-  readExternal,
-  detectTiff,
-  parseFileEntries,
-  decodeContainer as tiffDecodeContainer,
-} from "./tiff-decode.js";
+import { fmt } from "./f2p-core.js";
+import { quickDetect, decodeContainer } from "./f2p-decode.js";
 import { $, toast, sendToSW, waitForSw, postViaIframe } from "./sw-client.js";
 
 // ── 解码状态 ──
@@ -40,31 +26,6 @@ const decInput = $("decInput"),
   decPwdInput = $("decPwdInput"),
   decFileList = $("decFileList");
 const chunkSizeInput = $("chunkSize");
-
-// ── 快速检测格式 ──
-
-async function quickDetect(file) {
-  // 先检测 TIFF
-  const tiff = await detectTiff(file);
-  if (tiff) {
-    return "TIFF · F2P4";
-  }
-  // 回退到 BMP 检测
-  try {
-    const m = await readBmpHeader(file);
-    const bppLabel = m.bpp + "-bit";
-    const hdr = await readPayload(m, 0, 8);
-    const marker = (hdr[0] << 24) | (hdr[1] << 16) | (hdr[2] << 8) | hdr[3];
-    let fmt = "未知格式";
-    if (marker === 0x46325033) fmt = "F2P3";
-    else if (marker === 0x46325032) fmt = "F2P2";
-    else if (marker === 0x46325031) fmt = "F2P1";
-    else if (((hdr[0] << 8) | hdr[1]) > 0) fmt = "旧格式";
-    return "BMP · " + bppLabel + " · " + fmt;
-  } catch {
-    return null;
-  }
-}
 
 // ── 拖放 ──
 
@@ -95,7 +56,7 @@ decDrop.addEventListener("drop", (e) => {
 // ── 文件选择 ──
 
 decInput.addEventListener("change", async function () {
-  if (!this.files.length) return; // 取消选择不破坏当前状态
+  if (!this.files.length) return;
   decFile = this.files[0];
   decEntries = null;
   decKey = null;
@@ -130,127 +91,24 @@ decBtn.addEventListener("click", async () => {
     decBtn.disabled = true;
     decBtn.textContent = "⏳ 解析中…";
 
-    const type = await detectContainerType(decFile);
+    const result = await decodeContainer(decFile, pwd);
+    decEntries = result.entries;
+    decKey = result.key;
+    decBmpMeta = result.meta || null;
+    decDataStart = result.dataStart || 0;
+    renderDecFiles(result.entries);
 
-    if (type === "tiff") {
-      const tiff = await tiffDecodeContainer(decFile);
-      if (!tiff) throw Error("无法解析 TIFF 容器");
-
-      const key = await deriveEncKey(pwd, tiff.salt, tiff.iter, true);
-
-      // 全文解密元数据块（metaNonce 加密整块）
-      const fullDec = await aesDecrypt(
-        tiff.encryptedBlock,
-        key,
-        tiff.metaNonce,
-        0,
-      );
-
-      // 校验密码：N(4) 之后是 encMagic(4)，metaNonce 解密后直接验证
-      if (
-        fullDec[4] !== 0x46 ||
-        fullDec[5] !== 0x32 ||
-        fullDec[6] !== 0x50 ||
-        fullDec[7] !== 0x34
-      )
-        throw Error("密码错误");
-
-      // 从解密后的元数据解析文件条目
-      const parsed = parseFileEntries(fullDec);
-      if (!parsed) throw Error("数据结构损坏");
-
-      // 补齐 strip 偏移
-      const le = tiff.endian || 0x49;
-      for (const e of parsed.entries) {
-        const fIfd = await readIFD(decFile, e.ifdOffset, le);
-        const ft = fIfd.tags;
-        const getVal = (tag) => {
-          const t = ft.get(tag);
-          if (!t || !t.inline) return 0;
-          return new DataView(
-            t.data.buffer,
-            t.data.byteOffset,
-            t.data.length,
-          ).getUint32(0, true);
-        };
-        e.stripOffset = getVal(273);
-        e.stripSize = getVal(279);
-      }
-
-      const ent = parsed.entries.map((e) => ({
-        name: e.name,
-        size: e.size,
-        nonceData: e.nonce,
-        offset: e.stripOffset,
-        ctrStart: 0,
-        _tiff: true,
-      }));
-
-      decEntries = ent;
-      decKey = key;
-      decBmpMeta = null;
-      decDataStart = 0;
-      renderDecFiles(ent);
-      toast("✅ 解码完成，共 " + ent.length + " 个文件");
-    } else if (type === "bmp") {
-      // ── BMP 解码路径（F2P3 及更早）──
-      const m = await readBmpHeader(decFile);
-      const hdr = await readPayload(m, 0, 8);
-      const marker = (hdr[0] << 24) | (hdr[1] << 16) | (hdr[2] << 8) | hdr[3];
-      const isEnc = (marker & 0xffffff00) === 0x46325000 && (marker & 0xff) > 1;
-      const isF2P1 = marker === 0x46325031;
-      let ent, ds, key;
-
-      if (isF2P1) {
-        const fc =
-          ((hdr[4] << 24) | (hdr[5] << 16) | (hdr[6] << 8) | hdr[7]) >>> 0;
-        const r = await decMetaStream(m, fc, 0, null, 8);
-        ent = r.ent;
-        ds = r.ds;
-        key = null;
-      } else if (isEnc) {
-        const fc =
-          ((hdr[4] << 24) | (hdr[5] << 16) | (hdr[6] << 8) | hdr[7]) >>> 0;
-        const fl = (await readPayload(m, 8, 1))[0];
-        const salt = await readPayload(m, 9, 16);
-        const itb = await readPayload(m, 25, 4);
-        const iter = (itb[0] << 24) | (itb[1] << 16) | (itb[2] << 8) | itb[3];
-        key = await deriveEncKey(pwd, salt, iter, true);
-        const me = await readPayload(m, 29, 4);
-        const md = await aesDecrypt(me, key, salt.subarray(0, 12), 0);
-        if (
-          md[0] !== ((marker >>> 24) & 255) ||
-          md[1] !== ((marker >>> 16) & 255) ||
-          md[2] !== ((marker >>> 8) & 255) ||
-          md[3] !== (marker & 255)
-        )
-          throw Error("密码错误");
-        const r = await decMetaStream(m, fc, fl, key, 33);
-        ent = r.ent;
-        ds = r.ds;
-      } else {
-        const fc = (hdr[4] << 8) | hdr[5];
-        const r = await decMetaStream(m, fc, 0, null, 6);
-        ent = r.ent;
-        ds = r.ds;
-        key = null;
-      }
-
-      decEntries = ent;
-      decKey = key;
-      decBmpMeta = m;
-      decDataStart = ds;
-      renderDecFiles(ent);
-      toast("✅ 解码完成，共 " + ent.length + " 个文件");
-    }
+    toast("✅ 解码完成，共 " + decEntries.length + " 个文件");
   } catch (e) {
     toast("❌ " + (e.message || "解析失败"));
+  } finally {
     decBtn.disabled = false;
     decBtn.textContent = "🔎 提取";
   }
 });
 
 // ── 渲染文件列表 ──
+// 以下保持不变
 
 function renderDecFiles(ent) {
   const totalSize = ent.reduce((s, f) => s + f.size, 0);
@@ -281,7 +139,6 @@ function renderDecFiles(ent) {
   decFileList.style.display = "block";
   decBtn.textContent = "✅ 已提取";
 
-  // 全选
   document
     .getElementById("selectAllDec")
     .addEventListener("change", function () {
@@ -290,12 +147,10 @@ function renderDecFiles(ent) {
         .forEach((cb) => (cb.checked = this.checked));
     });
 
-  // 批量下载
   document
     .getElementById("batchDlBtn")
     .addEventListener("click", batchDownload);
 
-  // 单个下载按钮
   decFileList.querySelectorAll(".dl-btn").forEach((a) => {
     a.addEventListener("click", singleDownload);
   });

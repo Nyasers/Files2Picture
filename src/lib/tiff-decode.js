@@ -11,6 +11,7 @@ import {
   T_STRIP_OFFSETS,
   T_STRIP_BYTE_COUNTS,
 } from "./tiff-common.js";
+import { deriveEncKey, aesDecrypt } from "./f2p-core.js";
 
 export async function detectTiff(blob) {
   try {
@@ -174,4 +175,62 @@ export async function decodeContainer(blob) {
     isF2P4: true,
     stripSize: sSize,
   };
+}
+
+// ── 密码验证 + 条目补齐（高层解码入口）──
+
+/**
+ * 解码 F2P4 TIFF 容器，含密码校验
+ * @param {File} file - TIFF 文件
+ * @param {string} password - 密码
+ * @returns {{ entries: Array, key: CryptoKey }}
+ * @throws 密码错误/格式损坏
+ */
+export async function decodeTiff(file, password) {
+  const tiff = await decodeContainer(file);
+  if (!tiff) throw Error("无法解析 TIFF 容器");
+
+  const key = await deriveEncKey(password, tiff.salt, tiff.iter, true);
+  const fullDec = await aesDecrypt(tiff.encryptedBlock, key, tiff.metaNonce, 0);
+
+  // 校验密码：metaNonce 解密后直接验证 magic
+  if (
+    fullDec[4] !== 0x46 ||
+    fullDec[5] !== 0x32 ||
+    fullDec[6] !== 0x50 ||
+    fullDec[7] !== 0x34
+  )
+    throw Error("密码错误");
+
+  const parsed = parseFileEntries(fullDec);
+  if (!parsed) throw Error("数据结构损坏");
+
+  // 补齐 strip 偏移（从各自 IFD 读取）
+  const le = tiff.endian || 0x49;
+  for (const e of parsed.entries) {
+    const fIfd = await readIFD(file, e.ifdOffset, le);
+    const ft = fIfd.tags;
+    const getVal = (tag) => {
+      const t = ft.get(tag);
+      if (!t || !t.inline) return 0;
+      return new DataView(
+        t.data.buffer,
+        t.data.byteOffset,
+        t.data.length,
+      ).getUint32(0, true);
+    };
+    e.stripOffset = getVal(273);
+    e.stripSize = getVal(279);
+  }
+
+  const entries = parsed.entries.map((e) => ({
+    name: e.name,
+    size: e.size,
+    nonceData: e.nonce,
+    offset: e.stripOffset,
+    ctrStart: 0,
+    _tiff: true,
+  }));
+
+  return { entries, key };
 }
