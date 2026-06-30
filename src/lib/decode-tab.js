@@ -192,7 +192,7 @@ decBtn.addEventListener("click", async () => {
       decDataStart = 0;
       renderDecFiles(ent);
       toast("✅ 解码完成，共 " + ent.length + " 个文件");
-    } else if (type === "bigtiff") {
+    } else if (type === "bmp") {
       // ── BMP 解码路径（F2P3 及更早）──
       const m = await readBmpHeader(decFile);
       const hdr = await readPayload(m, 0, 8);
