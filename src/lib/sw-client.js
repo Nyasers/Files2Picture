@@ -105,8 +105,15 @@ export function postViaIframe(url, fields) {
   document.body.appendChild(form);
   form.submit();
   form.remove();
-  // 下载流响应到达后自动销毁，不依赖固定超时
-  f.addEventListener("load", () => f.remove());
+  // 等 SW 发来 download-started 信号再拆
+  const jobId = fields.id + (fields.idx !== undefined ? "_" + fields.idx : "");
+  const handler = (e) => {
+    if (e.data.type === "download-started" && e.data.jobId === jobId) {
+      navigator.serviceWorker.removeEventListener("message", handler);
+      requestAnimationFrame(() => f.remove());
+    }
+  };
+  navigator.serviceWorker.addEventListener("message", handler);
 }
 
 // ── 初始化 ──

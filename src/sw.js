@@ -118,6 +118,7 @@ self.addEventListener("fetch", (event) => {
               if (j) j.cancelled = true;
             },
           });
+          postToClients({ type: "download-started", jobId });
           return new Response(stream, { headers });
         }
 
@@ -207,6 +208,7 @@ self.addEventListener("fetch", (event) => {
               postToClients({ type: "job-update", jobId, status: "cancelled" });
             },
           });
+          postToClients({ type: "download-started", jobId });
           return new Response(stream, { headers });
         }
 
@@ -312,6 +314,7 @@ self.addEventListener("fetch", (event) => {
                   });
                 },
               });
+              postToClients({ type: "download-started", jobId: gjId });
               return new Response(stream, { headers });
             }
           }
