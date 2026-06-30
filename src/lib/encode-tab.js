@@ -3,14 +3,13 @@
 // ═══════════════════════════════════════════════
 
 import { fmt } from "./f2p-core.js";
-import { precomputeLayout } from "./tiff-common.js";
+import { precomputeBmp } from "./f2p-encode.js";
 import { $, toast, sendToSW, waitForSw, postViaIframe } from "./sw-client.js";
 import { switchTab } from "./ui-shell.js";
 
 // ── 编码状态 ──
 
 let sel = [];
-let nameEncEnabled = true;
 let ed = 0; // dragenter 计数
 
 // ── DOM ──
@@ -20,18 +19,8 @@ const encInput = $("encInput"),
   fileList = $("fileList"),
   encBtn = $("encBtn"),
   clearBtn = $("clearBtn");
-const encPwdInput = $("encPwdInput"),
-  encNameBubble = $("encNameBubble");
+const encPwdInput = $("encPwdInput");
 const chunkSizeInput = $("chunkSize");
-
-// ── 文件名加密开关 ──
-
-encNameBubble.classList.add("on");
-encNameBubble.addEventListener("click", () => {
-  nameEncEnabled = !nameEncEnabled;
-  encNameBubble.classList.toggle("on", nameEncEnabled);
-  encNameBubble.innerHTML = nameEncEnabled ? "🔒 加密文件名" : "🔓 加密文件名";
-});
 
 // ── 文件选择 ──
 
@@ -89,7 +78,8 @@ function updUI() {
       rmF(+this.dataset.idx);
     });
   });
-  encBtn.textContent = "🎨 生成图片（" + fmt(t) + " · " + sel.length + " 个文件）";
+  encBtn.textContent =
+    "🎨 生成图片（" + fmt(t) + " · " + sel.length + " 个文件）";
   encBtn.disabled = false;
 }
 
@@ -139,24 +129,20 @@ encBtn.addEventListener("click", async () => {
   if (!sel.length) return;
   await waitForSw();
   const password = encPwdInput.value;
-  const nameEnc = nameEncEnabled;
   const chunkSize = parseInt(chunkSizeInput.value) || 64;
   const files = sel.slice();
   const jobId = Date.now() + "";
 
-  // 预计算 BigTIFF 布局 + 总尺寸
-  const layout = precomputeLayout(
-    files.map((f) => ({ name: f.name, size: f.size })),
-  );
-  const fs = layout.totalSize;
-  const fn = "F2P_" + jobId + ".tif";
+  // 预计算 BMP 尺寸
+  const pc = precomputeBmp(files.map((f) => ({ name: f.name, size: f.size })));
+  const fn = "F2P_" + jobId + ".bmp";
 
   // 预注册编码流
   sendToSW({
     type: "encode-stream-prepare",
     jobId,
     filename: fn,
-    size: fs,
+    size: pc.fs,
   });
 
   const ready = await new Promise((resolve) => {
@@ -187,7 +173,6 @@ encBtn.addEventListener("click", async () => {
     type: "encode",
     files,
     password,
-    nameEnc,
     chunkSize,
     jobId,
     filename: fn,

@@ -75,7 +75,6 @@ export async function readChunk(file, start, end, trySize) {
   try {
     return new Uint8Array(await file.slice(start, end).arrayBuffer());
   } catch {
-    // 减半分块重试（串行，避免并行加倍内存）
     const half = Math.max(trySize >>> 1, 1024);
     if (half < trySize && start + half < end) {
       const a = await readChunk(file, start, start + half, half);
@@ -91,37 +90,27 @@ export async function readChunk(file, start, end, trySize) {
 
 // ── 容器格式检测 ──
 
-/**
- * 检测容器文件类型
- * @param {Blob} file
- * @returns {Promise<string|null>} 'bmp' | 'bigtiff' | null
- */
 export async function detectContainerType(file) {
   try {
-    const buf = await file.slice(0, 4).arrayBuffer();
-    const dv = new DataView(buf);
-    const b0 = dv.getUint8(0), b1 = dv.getUint8(1), b2 = dv.getUint8(2), b3 = dv.getUint8(3);
-    if (b0 === 0x42 && b1 === 0x4d) return "bmp";
-    if (b0 === 0x49 && b1 === 0x49 && b2 === 0x2a && b3 === 0x00) return "tiff";
-    if (b0 === 0x4d && b1 === 0x4d && b2 === 0x00 && b3 === 0x2a) return "tiff";
+    const buf = await file.slice(0, 2).arrayBuffer();
+    const v = new DataView(buf);
+    if (v.getUint8(0) === 0x42 && v.getUint8(1) === 0x4d) return "bmp";
     return null;
   } catch {
     return null;
   }
 }
 
-// ── BMP 编码（F2P3：32-bit BGRA，A通道参与数据）──
+// ── BMP 编码（32-bit BGRA 原生顺序）──
 
 export function buildBMPStream(payloadSize, onRow) {
-  const BPP = 4; // 32-bit: 4 bytes/pixel (B G R A)
+  const BPP = 4;
   const ps = 8 + payloadSize;
   const np = Math.ceil(ps / BPP);
   const sz = Math.min(0x7fffffff, Math.max(4, Math.ceil(Math.sqrt(np))));
   const w = sz,
     h = sz;
-  const st = w * BPP;
-  const rp = 0; // 32-bit 天然 4 字节对齐
-  const rb = st;
+  const rb = w * BPP;
   const pds = rb * h;
   const fs = 14 + 40 + pds;
 
@@ -137,7 +126,7 @@ export function buildBMPStream(payloadSize, onRow) {
   v.setInt32(18, w, true);
   v.setInt32(22, -h, true);
   v.setUint16(26, 1, true);
-  v.setUint16(28, 32, true); // 32-bit
+  v.setUint16(28, 32, true);
   v.setUint32(30, 0, true);
   v.setUint32(34, pds > 0xffffffff ? 0xffffffff : pds, true);
   v.setInt32(38, 2835, true);
@@ -149,10 +138,6 @@ export function buildBMPStream(payloadSize, onRow) {
   let col = 0,
     rowIdx = 0;
   let bp = 0;
-  let headBuf = [];
-  // 32-bit BMP: 偏移 0=B, 1=G, 2=R, 3=A
-  // 数据按 [R, G, B, A] 顺序存入
-  const ch = [2, 1, 0, 3];
   let writeChain = Promise.resolve();
 
   function flushRow() {
@@ -163,10 +148,6 @@ export function buildBMPStream(payloadSize, onRow) {
     rowBuf = new Uint8Array(rb);
     col = 0;
     rowIdx++;
-  }
-
-  function flushAll() {
-    return writeChain;
   }
 
   return {
@@ -181,19 +162,17 @@ export function buildBMPStream(payloadSize, onRow) {
       while (i < n && bp < ps) {
         if (bp % BPP === 0 && i + BPP <= n && bp + BPP <= ps) {
           const off = col * BPP;
-          rowBuf[off + 2] = arr[i]; // R
-          rowBuf[off + 1] = arr[i + 1]; // G
-          rowBuf[off + 0] = arr[i + 2]; // B
-          rowBuf[off + 3] = arr[i + 3]; // A
-          for (let j = 0; j < BPP && headBuf.length < 16; j++)
-            headBuf.push(arr[i + j]);
+          // BGRA 原生：B=0, G=1, R=2, A=3
+          rowBuf[off] = arr[i];
+          rowBuf[off + 1] = arr[i + 1];
+          rowBuf[off + 2] = arr[i + 2];
+          rowBuf[off + 3] = arr[i + 3];
           i += BPP;
           bp += BPP;
           col++;
         } else {
           const off = col * BPP;
-          rowBuf[off + ch[bp % BPP]] = arr[i];
-          if (headBuf.length < 16) headBuf.push(arr[i]);
+          rowBuf[off + (bp % BPP)] = arr[i];
           i++;
           bp++;
           if (bp % BPP === 0) col++;
@@ -245,7 +224,7 @@ export function buildBMPStream(payloadSize, onRow) {
   };
 }
 
-// ── BMP 解码（兼容 24-bit / 32-bit）──
+// ── BMP 头读取 ──
 
 export async function readBmpHeader(blob) {
   const buf = await blob.slice(0, 54).arrayBuffer();
@@ -257,16 +236,20 @@ export async function readBmpHeader(blob) {
   const w = v.getInt32(18, true);
   const hr = v.getInt32(22, true);
   const h = hr < 0 ? -hr : hr;
-  const bps = (bpp / 8) | 0; // 3 或 4
+  const bps = (bpp / 8) | 0;
   const st = w * bps;
   const rp = bpp === 32 ? 0 : (4 - (st % 4)) % 4;
   return { w, h, bpp, rb: st + rp, po, blob };
 }
 
-export async function readPayload(m, bp, len) {
-  const bpp = m.bpp || 24;
-  const bps = (bpp / 8) | 0; // 3 或 4
-  const chMap = bpp === 32 ? [2, 1, 0, 3] : [2, 1, 0];
+// ── BMP 像素读取 ──
+// chMap: null/null → BGRA 原生（32-bit 直接偏移，24-bit BGR 原生）
+// chMap: [2,1,0] → 24-bit 旧格式
+// chMap: [2,1,0,3] → 32-bit 旧格式（F2P2/F2P3）
+
+export async function readPayload(m, bp, len, chMap) {
+  const bpp = m.bpp || 32;
+  const bps = (bpp / 8) | 0;
   const out = new Uint8Array(len);
   if (len === 0) return out;
   const { w, po, rb, blob } = m;
@@ -275,7 +258,6 @@ export async function readPayload(m, bp, len) {
   const pxEnd = ((bp + len - 1) / bps) | 0;
   const rowStart = (pxStart / w) | 0;
   const rowEnd = (pxEnd / w) | 0;
-
   const fileStart = po + rowStart * rb;
   const fileEnd = po + (rowEnd + 1) * rb;
 
@@ -286,20 +268,22 @@ export async function readPayload(m, bp, len) {
     throw new Error("读取 BMP 像素数据失败");
   }
 
+  const useMap = chMap && chMap.length > 0;
   for (let off = 0; off < len; off++) {
     const pOff = bp + off;
     const pxIdx = (pOff / bps) | 0;
     const row = (pxIdx / w) | 0;
     const relRow = row - rowStart;
     const pInRow = pxIdx % w;
-    const bufOff = relRow * rb + pInRow * bps + chMap[pOff % bps];
-    out[off] = buf[bufOff];
+    const chOff = useMap ? chMap[pOff % bps] : pOff % bps;
+    out[off] = buf[relRow * rb + pInRow * bps + chOff];
   }
-
   return out;
 }
 
-export async function decMetaStream(m, fc, flags, key, ms) {
+// ── 元数据流解析（经通道映射的旧格式用）──
+
+export async function decMetaStream(m, fc, flags, key, ms, chMap) {
   const newFmt = ms > 6;
   const encNameEnc = newFmt && flags & 1;
   const hasNonces = ms >= 29;
@@ -308,13 +292,13 @@ export async function decMetaStream(m, fc, flags, key, ms) {
     : newFmt
       ? 2 + 8
       : 2 + 4;
-  let buf = await readPayload(m, ms, 65536);
+  let buf = await readPayload(m, ms, 65536, chMap);
   let off = 0;
   const ent = [];
 
   for (let i = 0; i < fc; i++) {
     while (off + entryMin > buf.length) {
-      const more = await readPayload(m, ms + buf.length, 65536);
+      const more = await readPayload(m, ms + buf.length, 65536, chMap);
       if (buf.length >= 0x10000000) throw Error("元信息过大");
       const mg = new Uint8Array(buf.length + more.length);
       mg.set(buf);
@@ -323,7 +307,6 @@ export async function decMetaStream(m, fc, flags, key, ms) {
     }
     const nl = (buf[off] << 8) | buf[off + 1];
     off += 2;
-
     let nm,
       dl,
       nonceData = null;
@@ -395,7 +378,6 @@ export async function decMetaStream(m, fc, flags, key, ms) {
         off += 4;
       }
     }
-
     ent.push({
       name: nm,
       size: dl,
@@ -405,15 +387,10 @@ export async function decMetaStream(m, fc, flags, key, ms) {
 
   const es = newFmt ? 8 : 4;
   const no = hasNonces ? 12 + (encNameEnc ? 12 : 0) : 0;
-  const payloadSize = ent.reduce(
-    (s, f) => s + 2 + _ctx.e.encode(f.name).length + es + no + f.size,
-    0,
-  );
-  // 填入每个文件在 BMP 像素数据中的偏移
   let accOff = ms + off;
   for (const e of ent) {
     e.offset = accOff;
     accOff += e.size;
   }
-  return { ent, payloadSize, m, ds: ms + off };
+  return { ent, ds: ms + off };
 }

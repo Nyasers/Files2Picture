@@ -179,8 +179,6 @@ async function singleDownload() {
       name: ent.name,
       keyRaw: rawKey ? Array.from(new Uint8Array(rawKey)) : null,
       chunkSize: parseInt(chunkSizeInput.value) || 64,
-      ctrStart: ent.ctrStart || 0,
-      tiff: !!ent._tiff,
     });
 
     const ready = await new Promise((resolve) => {
@@ -239,8 +237,6 @@ async function batchDownload() {
         ? Array.from(decEntries[idx].nonceData)
         : null,
       name: decEntries[idx].name,
-      ctrStart: decEntries[idx].ctrStart || 0,
-      tiff: !!decEntries[idx]._tiff,
     }));
     const gid = Date.now() + "";
 
