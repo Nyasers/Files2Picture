@@ -65,16 +65,16 @@ decInput.addEventListener("change", async function () {
   decFileList.style.display = "none";
   decBtn.textContent = "🔎 提取";
 
-  const info = await quickDetect(decFile);
-  if (info) {
+  const detected = await quickDetect(decFile);
+  if (detected) {
     decHint.classList.remove("err");
     decBtn.disabled = false;
+    decHint.textContent = fmt(decFile.size) + " · " + detected;
   } else {
-    info = "非 F2P 文件";
     decHint.classList.add("err");
     decBtn.disabled = true;
+    decHint.textContent = fmt(decFile.size) + " · 非 F2P 文件";
   }
-  decHint.textContent = fmt(decFile.size) + " · " + info;
 });
 
 decClearBtn.addEventListener("click", () => {
@@ -217,27 +217,7 @@ async function singleDownload() {
       chunkSize: parseInt(chunkSizeInput.value) || 64,
     });
 
-    const ready = await new Promise((resolve) => {
-      const handler = (e) => {
-        const d = e.data;
-        if (
-          d.jobId === jobId &&
-          (d.type === "decode-stream-ready" || d.type === "decode-stream-error")
-        ) {
-          navigator.serviceWorker.removeEventListener("message", handler);
-          resolve(d);
-        }
-      };
-      navigator.serviceWorker.addEventListener("message", handler);
-      setTimeout(() => {
-        navigator.serviceWorker.removeEventListener("message", handler);
-        resolve({ type: "decode-stream-error", error: "SW 响应超时" });
-      }, 5000);
-    });
-
-    if (ready.type === "decode-stream-error")
-      throw Error(ready.error || "准备失败");
-
+    // SW 同步设 pending 条目，POST /dl 后 fetch handler 异步等 key 导入
     postViaIframe("/dl", { job: "dec", type: "stream", id: jobId });
   } catch (e) {
     toast("❌ " + (e.message || "提取失败"));
@@ -285,29 +265,7 @@ async function batchDownload() {
       chunkSize,
     });
 
-    const groupReady = await new Promise((resolve) => {
-      const handler = (e) => {
-        const d = e.data;
-        if (d.type === "decode-group-ready" && d.id === gid) {
-          navigator.serviceWorker.removeEventListener("message", handler);
-          resolve(d);
-        }
-        if (d.type === "decode-group-error" && d.id === gid) {
-          navigator.serviceWorker.removeEventListener("message", handler);
-          resolve(d);
-        }
-      };
-      navigator.serviceWorker.addEventListener("message", handler);
-      setTimeout(() => {
-        navigator.serviceWorker.removeEventListener("message", handler);
-        resolve(null);
-      }, 5000);
-    });
-
-    if (!groupReady || groupReady.type === "decode-group-error") {
-      throw Error(groupReady?.error || "分组准备失败");
-    }
-
+    // SW 同步设 pending 条目，逐个 POST /dl 后 fetch handler 异步等 key 导入
     for (let i = 0; i < files.length; i++) {
       postViaIframe("/dl", {
         job: "dec",

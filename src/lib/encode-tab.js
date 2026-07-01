@@ -210,12 +210,15 @@ encBtn.addEventListener("click", async () => {
   const pc = precomputeBmp(files.map((f) => ({ name: f.name, size: f.size })));
   const fn = "F2P_" + jobId + ".bmp";
 
-  // 预注册编码流
+  // 下发编码任务（SW 同步设 pendingStreams，回复 ready）
   sendToSW({
-    type: "encode-stream-prepare",
+    type: "encode",
+    files,
+    password,
+    chunkSize,
     jobId,
     filename: fn,
-    size: pc.fs,
+    totalSize: pc.fs,
   });
 
   const ready = await new Promise((resolve) => {
@@ -240,16 +243,6 @@ encBtn.addEventListener("click", async () => {
 
   // 踢表单 POST /dl
   postViaIframe("/dl", { job: "enc", type: "stream", id: jobId });
-
-  // 下发编码任务
-  sendToSW({
-    type: "encode",
-    files,
-    password,
-    chunkSize,
-    jobId,
-    filename: fn,
-  });
 
   sel = [];
   updUI();

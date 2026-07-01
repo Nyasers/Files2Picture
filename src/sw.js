@@ -49,6 +49,19 @@ self.addEventListener("message", (event) => {
   if (msg.type === "ping") return;
   switch (msg.type) {
     case "encode":
+      // 同步设 pendingStreams，让 /dl 拦截能找到
+      pendingStreams.set(msg.jobId, {
+        push: null,
+        close: null,
+        size: msg.totalSize,
+        name: msg.filename,
+      });
+      if (event.source)
+        event.source.postMessage({
+          type: "encode-stream-ready",
+          jobId: msg.jobId,
+          name: msg.filename,
+        });
       event.waitUntil(runEncode(event, msg));
       break;
     case "cancel":
@@ -61,13 +74,10 @@ self.addEventListener("message", (event) => {
       consumeJob(msg.jobId);
       break;
     case "decode-stream-prepare":
-      event.waitUntil(handleDecodeStreamPrepare(event, msg));
-      break;
-    case "encode-stream-prepare":
-      handleEncodeStreamPrepare(event, msg);
+      handleDecodeStreamPrepare(event, msg);
       break;
     case "decode-group":
-      event.waitUntil(handleDecodeGroup(event, msg));
+      handleDecodeGroup(event, msg);
       break;
   }
 });
@@ -126,6 +136,14 @@ self.addEventListener("fetch", (event) => {
         const decJob = pendingDecodeStreams.get(jobId);
         if (decJob) {
           pendingDecodeStreams.delete(jobId);
+          // 等待异步密钥导入
+          if (decJob.keyPromise) {
+            try {
+              decJob.key = await decJob.keyPromise;
+            } catch (e) {
+              return new Response("密钥导入失败", { status: 500 });
+            }
+          }
           const fileName = decJob.name || "file.bin";
 
           const job = {
@@ -216,6 +234,14 @@ self.addEventListener("fetch", (event) => {
         if (p.idx !== undefined) {
           const group = pendingDecodeGroups.get(jobId);
           if (group) {
+            // 等待异步密钥导入
+            if (group.keyPromise) {
+              try {
+                group.key = await group.keyPromise;
+              } catch (e) {
+                return new Response("密钥导入失败", { status: 500 });
+              }
+            }
             const fi = group.files[parseInt(p.idx)];
             if (fi) {
               group.dispatched = (group.dispatched || 0) + 1;
@@ -326,9 +352,9 @@ self.addEventListener("fetch", (event) => {
   }
 });
 
-// ── 解码流式准备 ──
+// ── 解码流式准备（同步设 pending 条目，key 异步导入推迟到 fetch handler）──
 
-async function handleDecodeStreamPrepare(event, msg) {
+function handleDecodeStreamPrepare(event, msg) {
   const {
     jobId,
     bmpFile,
@@ -340,55 +366,34 @@ async function handleDecodeStreamPrepare(event, msg) {
     chunkSize = 64,
   } = msg;
   if (!jobId) return;
-  try {
-    let key = null;
-    if (keyRaw) {
-      key = await crypto.subtle.importKey(
+
+  const keyPromise = keyRaw
+    ? crypto.subtle.importKey(
         "raw",
         new Uint8Array(keyRaw),
         { name: "AES-CTR" },
         false,
         ["decrypt"],
-      );
-    }
-    pendingDecodeStreams.set(jobId, {
-      bmpFile,
-      key,
-      offset,
-      size,
-      nonce: nonce ? new Uint8Array(nonce) : null,
-      name,
-      chunkSize,
-    });
-    if (event.source)
-      event.source.postMessage({ type: "decode-stream-ready", jobId, name });
-  } catch (e) {
-    if (event.source)
-      event.source.postMessage({
-        type: "decode-stream-error",
-        jobId,
-        error: e.message,
-      });
-  }
-}
+      )
+    : Promise.resolve(null);
 
-// ── 编码流式准备 ──
+  pendingDecodeStreams.set(jobId, {
+    bmpFile,
+    offset,
+    size,
+    nonce: nonce ? new Uint8Array(nonce) : null,
+    name,
+    chunkSize,
+    keyPromise,
+  });
 
-function handleEncodeStreamPrepare(event, msg) {
-  const { jobId, filename, size } = msg;
-  if (!jobId) return;
-  pendingStreams.set(jobId, { push: null, close: null, size, name: filename });
   if (event.source)
-    event.source.postMessage({
-      type: "encode-stream-ready",
-      jobId,
-      name: filename,
-    });
+    event.source.postMessage({ type: "decode-stream-ready", jobId, name });
 }
 
-// ── 解码分组准备 ──
+// ── 解码分组准备（同步设 pending 条目，key 异步导入推迟到 fetch handler）──
 
-async function handleDecodeGroup(event, msg) {
+function handleDecodeGroup(event, msg) {
   const { id, files, bmpFile, keyRaw, chunkSize } = msg;
   if (!id || !files || !files.length || !bmpFile) {
     if (event.source)
@@ -399,37 +404,30 @@ async function handleDecodeGroup(event, msg) {
       });
     return;
   }
-  try {
-    let key = null;
-    if (keyRaw) {
-      key = await crypto.subtle.importKey(
+
+  const keyPromise = keyRaw
+    ? crypto.subtle.importKey(
         "raw",
         new Uint8Array(keyRaw),
         { name: "AES-CTR" },
         false,
         ["decrypt"],
-      );
-    }
-    pendingDecodeGroups.set(id, {
-      bmpFile,
-      files: files.map((f) => ({
-        ...f,
-        nonce: f.nonce ? new Uint8Array(f.nonce) : null,
-      })),
-      key,
-      chunkSize: chunkSize || 64,
-      dispatched: 0,
-    });
-    if (event.source)
-      event.source.postMessage({ type: "decode-group-ready", id });
-  } catch (e) {
-    if (event.source)
-      event.source.postMessage({
-        type: "decode-group-error",
-        id,
-        error: e.message,
-      });
-  }
+      )
+    : Promise.resolve(null);
+
+  pendingDecodeGroups.set(id, {
+    bmpFile,
+    files: files.map((f) => ({
+      ...f,
+      nonce: f.nonce ? new Uint8Array(f.nonce) : null,
+    })),
+    keyPromise,
+    chunkSize: chunkSize || 64,
+    dispatched: 0,
+  });
+
+  if (event.source)
+    event.source.postMessage({ type: "decode-group-ready", id });
 }
 
 // ── 工具 ──
