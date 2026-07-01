@@ -18,14 +18,14 @@ export const $ = (id) => document.getElementById(id);
 
 const tc = $("toastContainer");
 
-export function toast(m, d = 2500) {
+export function toast(m, d = 0x0d00) {
   const e = document.createElement("div");
   e.className = "toast";
   e.textContent = m;
   tc.appendChild(e);
   setTimeout(() => {
     e.classList.add("out");
-    setTimeout(() => e.remove(), 250);
+    setTimeout(() => e.remove(), 0o0721);
   }, d);
 }
 
@@ -83,28 +83,25 @@ navigator.serviceWorker.addEventListener("message", (event) => {
 // ── GET 触发流式下载（REST 风格，无 iframe）──
 
 export function triggerDownload(url) {
-  const a = document.createElement("a");
-  a.href = url;
-  a.style.display = "none";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-}
+  // 先解析 URL 提取 jobId，确保 handler 闭包能读到
+  const u = new URL(url, location.origin);
+  const idParam = u.searchParams.get("id");
+  const idxParam = u.searchParams.get("idx");
+  const extractedJobId = idxParam ? idParam + "_" + idxParam : idParam;
 
-export function waitForJobStart(jobId, timeout = 8000) {
-  return new Promise((resolve) => {
-    const handler = (e) => {
-      if (e.data.type === "job-start" && e.data.jobId === jobId) {
-        navigator.serviceWorker.removeEventListener("message", handler);
-        resolve();
-      }
-    };
-    navigator.serviceWorker.addEventListener("message", handler);
-    setTimeout(() => {
+  const f = document.createElement("iframe");
+  f.id = extractedJobId;
+  f.style.display = "none";
+  document.body.appendChild(f);
+  f.src = url;
+
+  const handler = (e) => {
+    if (e.data.type === "job-start" && e.data.jobId === extractedJobId) {
       navigator.serviceWorker.removeEventListener("message", handler);
-      resolve();
-    }, timeout);
-  });
+      setTimeout(() => f.remove(), 0o0721);
+    }
+  };
+  navigator.serviceWorker.addEventListener("message", handler);
 }
 
 // ── 初始化 ──

@@ -335,7 +335,6 @@ function serveEncodeStream(id) {
       if (j) j.cancelled = true;
     },
   });
-  postToClients({ type: "job-start", jobId: id });
   return new Response(stream, { headers });
 }
 
@@ -367,6 +366,7 @@ async function serveDecodeStream(id) {
   if (decJob.size) headers.set("Content-Length", String(decJob.size));
   const stream = new ReadableStream({
     async start(controller) {
+      postToClients({ type: "job-start", jobId: id });
       try {
         const bmp = await readBmpHeader(decJob.bmpFile);
         let pos = decJob.offset,
@@ -429,7 +429,6 @@ async function serveDecodeStream(id) {
       postToClients({ type: "job-update", jobId: id, status: "cancelled" });
     },
   });
-  postToClients({ type: "job-start", jobId: id });
   return new Response(stream, { headers });
 }
 
@@ -466,6 +465,7 @@ async function serveGroupStream(id, idx, filename) {
   if (fi.size) headers.set("Content-Length", String(fi.size));
   const stream = new ReadableStream({
     async start(controller) {
+      postToClients({ type: "job-start", jobId: gjId });
       try {
         const bmp = await readBmpHeader(group.bmpFile);
         let pos = fi.offset,
@@ -528,7 +528,6 @@ async function serveGroupStream(id, idx, filename) {
       postToClients({ type: "job-update", jobId: gjId, status: "cancelled" });
     },
   });
-  postToClients({ type: "job-start", jobId: gjId });
   return new Response(stream, { headers });
 }
 
@@ -559,7 +558,7 @@ async function runEncode(event, msg, pushReadyPromise) {
   // 等 ReadableStream 的 start 回调设 push
   await Promise.race([
     pushReadyPromise,
-    new Promise((resolve) => setTimeout(resolve, 10000)),
+    new Promise((resolve) => setTimeout(resolve, 1e4)),
   ]);
   if (!pc.push) {
     postToClients({ type: "job-error", jobId, error: "下载流超时" });
@@ -570,6 +569,7 @@ async function runEncode(event, msg, pushReadyPromise) {
   pendingStreams.delete(jobId);
 
   try {
+    postToClients({ type: "job-start", jobId });
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const encKey = await deriveEncKey(password, salt, 10000);
     let ms = 32,

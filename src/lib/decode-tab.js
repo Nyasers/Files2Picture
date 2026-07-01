@@ -4,14 +4,7 @@
 
 import { fmt } from "./f2p-core.js";
 import { quickDetect, decodeContainer } from "./f2p-decode.js";
-import {
-  $,
-  toast,
-  sendToSW,
-  waitForSw,
-  triggerDownload,
-  waitForJobStart,
-} from "./sw-client.js";
+import { $, toast, sendToSW, waitForSw, triggerDownload } from "./sw-client.js";
 
 // ── 解码状态 ──
 
@@ -272,11 +265,12 @@ async function batchDownload() {
       chunkSize,
     });
 
-    // SW 同步设 pending 条目，逐个触发，等 job-start 再继续下一个
-    for (let i = 0; i < files.length; i++) {
-      triggerDownload("/files?id=" + gid + "&idx=" + i);
-      await waitForJobStart(gid + "_" + i);
-    }
+    // 全部并行触发，各 iframe 独立导航互不干扰
+    Promise.all(
+      Array.from({ length: files.length }, (_, i) =>
+        triggerDownload("/files?id=" + gid + "&idx=" + i),
+      ),
+    );
   } catch (e) {
     toast("❌ " + (e.message || "批量下载失败"));
   }
