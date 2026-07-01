@@ -10,6 +10,13 @@
 - 解码流中 `readBmpHeader` 移出循环体，每 chunk 不再重复解析 BMP 头
 - 任务列表改为增量 DOM 更新，不再全量 `innerHTML` 重绘
 
+### 编码流等待 Promise 化 + 解码器自包含
+
+- `runEncode` 等 `pc.push` 从 5ms 轮询改为 Promise 桥接，ReadableStream `start` 回调完成时 resolve，消除竞态隐患
+- `decMetaStream` 从 `f2p-core.js` 移除，元数据解析内联进各解码器自身：
+  - `f2p1-decode` / `f2p2-decode` / `f2p3-decode` / `f2p4-decode` 各自维护自己的条目循环
+  - 公共的 `extendBuffer` 保留在 core 中，四个解码器共享
+
 ## 2026-06-30
 
 ### F2P4 重构
