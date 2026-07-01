@@ -165,6 +165,8 @@ self.addEventListener("fetch", (event) => {
           const stream = new ReadableStream({
             async start(controller) {
               try {
+                // 预先解析 BMP 头，避免循环内重复解析
+                const bmp = await readBmpHeader(decJob.bmpFile);
                 let pos = decJob.offset,
                   left = decJob.size,
                   total = decJob.size;
@@ -172,7 +174,6 @@ self.addEventListener("fetch", (event) => {
                   const ck = (decJob.chunkSize || 64) * 1024;
                   const take = Math.min(left, ck);
                   let data;
-                  const bmp = await readBmpHeader(decJob.bmpFile);
                   data = await readPayload(bmp, pos, take);
                   if (job.cancelled) break;
                   let out = data;
@@ -268,6 +269,8 @@ self.addEventListener("fetch", (event) => {
               const stream = new ReadableStream({
                 async start(controller) {
                   try {
+                    // 预先解析 BMP 头，避免循环内重复解析
+                    const bmp = await readBmpHeader(group.bmpFile);
                     let pos = fi.offset,
                       left = fi.size,
                       total = fi.size;
@@ -275,7 +278,6 @@ self.addEventListener("fetch", (event) => {
                       const ck = (group.chunkSize || 64) * 1024;
                       const take = Math.min(left, ck);
                       let data;
-                      const bmp = await readBmpHeader(group.bmpFile);
                       data = await readPayload(bmp, pos, take);
                       if (job.cancelled) break;
                       let out = data;
