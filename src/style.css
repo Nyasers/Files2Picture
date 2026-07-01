@@ -146,18 +146,6 @@ h1 small {
     transition: none;
   }
 }
-.grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1.5rem;
-  margin-top: 1rem;
-}
-@media (max-width: 720px) {
-  .grid {
-    grid-template-columns: 1fr;
-    gap: 2rem;
-  }
-}
 .top-bar {
   display: flex;
   align-items: center;
@@ -349,15 +337,6 @@ label {
   color: #ff5a5a;
   background: #2a1a1a;
 }
-.file-summary {
-  display: flex;
-  justify-content: space-between;
-  padding: 6px 8px;
-  border-top: 1px solid #2a2a2a;
-  margin-top: 4px;
-  color: #7a7aff;
-  font-size: 0.78rem;
-}
 
 .enc-sort-header {
   display: flex;
@@ -405,12 +384,6 @@ label {
   color: #555;
   font-size: 0.78rem;
 }
-.file-item .file-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
-}
 
 .btn-group {
   display: flex;
@@ -428,35 +401,6 @@ label {
   min-width: 0;
   margin-bottom: 0;
 }
-.enc-pwd {
-  margin-top: 10px;
-}
-.name-enc-bubble {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 12px;
-  border-radius: 20px;
-  font-size: 0.82rem;
-  cursor: pointer;
-  user-select: none;
-  white-space: nowrap;
-  border: 1px solid #444;
-  background: #1e1e1e;
-  color: #777;
-  transition: all 0.2s;
-}
-.name-enc-bubble:hover {
-  border-color: #666;
-}
-.name-enc-bubble.on {
-  background: #1a2e1a;
-  border-color: #2a8a2a;
-  color: #4caf50;
-}
-.name-enc-bubble.on:hover {
-  border-color: #4caf50;
-}
 .pwd-input {
   display: block;
   box-sizing: border-box;
@@ -471,10 +415,6 @@ label {
 }
 .pwd-input:focus {
   border-color: #4a4aff;
-}
-.pwd-toggle,
-.pwd-toggle input[type="checkbox"] {
-  display: none;
 }
 .btn {
   flex: 1;
@@ -686,9 +626,6 @@ label {
 .decode-file-item:last-child {
   border-bottom: none;
 }
-.decode-file-item .cb {
-  accent-color: #4a4aff;
-}
 .decode-file-item .name {
   flex: 1;
   overflow: hidden;
@@ -712,22 +649,6 @@ label {
 }
 .dl-btn:hover {
   background: #4a4a5a;
-}
-.file-list-select-all {
-  font-size: 0.8rem;
-  color: #aaa;
-  padding: 4px 8px;
-  border-bottom: 1px solid #2a2a2a;
-  margin-bottom: 2px;
-}
-.file-list-select-all label {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  cursor: pointer;
-}
-.file-list-select-all input {
-  accent-color: #4a4aff;
 }
 .btn-batch-dl {
   background: #3a3a5a;
@@ -791,12 +712,16 @@ label {
   }
 }
 
-.note {
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
   font-size: 0.75rem;
   color: #666;
-  margin-top: 10px;
+  margin-top: 12px;
   border-top: 1px solid #2a2a2a;
-  padding-top: 8px;
+  padding-top: 10px;
 }
 
 /* ═══ 任务列表 ═══ */
@@ -948,7 +873,4 @@ label {
 .btn-dl-sm:hover {
   background: #4a4a5a;
   color: #fff;
-}
-.btn-detail:hover {
-  color: #aaa;
 }
