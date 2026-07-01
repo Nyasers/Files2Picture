@@ -9,7 +9,7 @@
 - **BGRA 原生编码** 数据字节按像素的 BGRA 顺序直接写入，零通道映射开销
 - **32-bit BMP 直写** 每像素 4 字节，Alpha 通道承载数据，密度比 24-bit 高 33%
 - **零填充浪费** 像素区取最大完全平方数 k²（k²×4 ≤ payload），尾部数据以 BMP 额外数据存放，bfSize 停在像素区边界，F2P 自读尾巴
-- **流式处理** ReadableStream 分块 + StreamSaver 直写磁盘，不 OOM
+- **流式处理** Service Worker 拦截 POST /dl，ReadableStream 分块推送，浏览器直写磁盘
 - **按需解码** 解析时只读元信息，点哪个文件再按需提取解密
 - **拖拽排序** 编码区文件列表支持拖拽调整顺序，解码顺序与编码一致
 - **编解码分离** 顶部标签切换，互不干扰
@@ -66,12 +66,30 @@ BMP header（54 字节）中的三个关键字段：
 | F2P2     | `0x46325032` | 24-bit   | `[2,1,0]` 映射   |
 | F2P1     | `0x46325031` | 24-bit   | `[2,1,0]` 映射   |
 
+## 架构
+
+编解码在 Service Worker 中执行，页面仅负责 UI 交互。
+
+```
+编码流程
+  Page → postMessage(encode, files) → SW 同步设 pendingStream，回复 ready
+  Page → POST /dl（隐藏表单）→ SW fetch 拦截 /dl，创建 ReadableStream
+  SW → runEncode() 异步编码 BMP，push 像素进 stream → 浏览器流式下载
+
+解码流程
+  Page → decodeContainer() 解析 BMP 元信息（纯计算，不写流）
+  Page → postMessage(decode-stream-prepare, params) → SW 同步设 pending 条目
+  Page → POST /dl → SW fetch 创建 ReadableStream，边读 BMP 边解密边推送
+```
+
+SW 不缓存完整文件，逐 chunk 读写，内存占用稳定在 `chunkSize × 8` 左右。
+
 ## 使用
 
 ```bash
 npm install
 npm run build    # 生产构建 → dist/
-npm run dev      # 开发 → http://localhost:3000（StreamSaver 需要 HTTP）
+npm run dev      # 开发 → http://localhost:3000
 ```
 
 1. 编码：拖放文件 → 可选密码 → 拖拽排序 → 生成图片
