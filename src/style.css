@@ -849,6 +849,13 @@ label {
   color: #ff5a5a;
   margin: 6px 0;
 }
+
+/* 任务空状态 */
+.tasks-empty {
+  text-align: center;
+  color: #666;
+  padding: 20px;
+}
 .task-actions {
   display: flex;
   gap: 8px;

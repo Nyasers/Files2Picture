@@ -14,6 +14,13 @@ import {
 // ── Job 状态存储 ──
 
 const jobHandlers = new Map();
+const tasksList = $("tasksList");
+
+function renderEmpty() {
+  const tmpl = document.getElementById("tasks-empty").content.cloneNode(true);
+  tasksList.innerHTML = "";
+  tasksList.appendChild(tmpl);
+}
 
 export function refreshTasks() {
   sendToSW({ type: "list-jobs" });
@@ -29,34 +36,36 @@ function renderTasks() {
     ([, j]) => j.status === "running",
   );
   if (!entries.length) {
-    $("tasksList").innerHTML =
-      '<div style="text-align:center;color:#666;padding:20px">暂无任务</div>';
+    renderEmpty();
     return;
   }
 
   entries.sort(([a], [b]) => b.localeCompare(a));
 
-  let h = "";
+  const frag = document.createDocumentFragment();
   for (const [jobId, job] of entries) {
     const pct = job.progress || 0;
-    h += '<div class="task-item" data-job-id="' + jobId + '">';
-    h +=
-      '<div class="task-header"><span class="task-kind">' +
-      (job.kind === "encode" ? "🔒 编码" : "🔓 解码") +
-      '</span><span class="task-status">运行中…</span></div>';
-    if (job.label) h += '<div class="task-label">' + job.label + "</div>";
-    if (job.currentFile)
-      h += '<div class="task-file">' + job.currentFile + "</div>";
-    h +=
-      '<div class="tbar-wrap"><div class="tbar" style="width:' +
-      pct +
-      '%"></div></div>' +
-      '<div class="task-pct">' +
-      pct +
-      "%</div>";
-    h += "</div>";
+    const item = document.getElementById("task-item").content.cloneNode(true);
+    const div = item.querySelector(".task-item");
+    div.dataset.jobId = jobId;
+    item.querySelector(".task-kind").textContent =
+      job.kind === "encode" ? "🔒 编码" : "🔓 解码";
+    if (job.label) {
+      item.querySelector(".task-label").textContent = job.label;
+    } else {
+      item.querySelector(".task-label").remove();
+    }
+    if (job.currentFile) {
+      item.querySelector(".task-file").textContent = job.currentFile;
+    } else {
+      item.querySelector(".task-file").remove();
+    }
+    item.querySelector(".tbar").style.width = pct + "%";
+    item.querySelector(".task-pct").textContent = pct + "%";
+    frag.appendChild(item);
   }
-  $("tasksList").innerHTML = h;
+  tasksList.innerHTML = "";
+  tasksList.appendChild(frag);
 }
 
 // ── 增量更新：只更新进度条和文件名 ──
@@ -84,10 +93,8 @@ function removeTaskItem(jobId) {
   );
   if (item) {
     item.remove();
-    // 无剩余任务则显示空状态
     if (!document.querySelector(".task-item")) {
-      $("tasksList").innerHTML =
-        '<div style="text-align:center;color:#666;padding:20px">暂无任务</div>';
+      renderEmpty();
     }
   }
 }

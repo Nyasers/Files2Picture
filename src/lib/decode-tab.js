@@ -119,7 +119,7 @@ decBtn.addEventListener("click", async () => {
 // 以下保持不变
 
 function updateSelectionStats() {
-  const cbs = document.querySelectorAll(".dec-file-cb");
+  const cbs = decFileList.querySelectorAll(".dec-file-cb");
   let n = 0,
     s = 0;
   cbs.forEach((cb) => {
@@ -128,63 +128,59 @@ function updateSelectionStats() {
       s += decEntries[+cb.dataset.idx].size;
     }
   });
-  const el = document.getElementById("decSelectedCount");
+  const el = decFileList.querySelector(".dec-selected-count");
   if (el) el.textContent = "已选 " + n + " 个 · " + fmt(s);
-  const allCb = document.getElementById("selectAllDec");
+  const allCb = decFileList.querySelector(".select-all-dec");
   if (allCb) allCb.checked = n === cbs.length;
 }
 
 function renderDecFiles(ent) {
   const totalSize = ent.reduce((s, f) => s + f.size, 0);
-  let h =
-    '<div class="dec-file-header"><label class="select-all-label"><input type="checkbox" id="selectAllDec" checked> 全选</label>' +
-    '<span class="dec-file-summary" id="decSummary">共 ' +
-    ent.length +
-    " 个 · " +
-    fmt(totalSize) +
-    '</span><span class="dec-selected-count" id="decSelectedCount">已选 ' +
-    ent.length +
-    " 个 · " +
-    fmt(totalSize) +
-    "</span>" +
-    '<button class="btn-batch-dl" id="batchDlBtn">📥 下载选中</button></div>' +
-    '<div class="dec-file-body">';
+
+  // 用模板构建文件列表
+  const container = document
+    .getElementById("dec-file-container")
+    .content.cloneNode(true);
+  container.querySelector(".dec-file-summary").textContent =
+    "共 " + ent.length + " 个 · " + fmt(totalSize);
+  container.querySelector(".dec-selected-count").textContent =
+    "已选 " + ent.length + " 个 · " + fmt(totalSize);
+
+  const body = container.querySelector(".dec-file-body");
   for (let i = 0; i < ent.length; i++) {
     const f = ent[i];
-    h +=
-      '<div class="decode-file-item"><input type="checkbox" class="dec-file-cb" data-idx="' +
-      i +
-      '" checked>' +
-      '<span class="name">📄 ' +
-      f.name +
-      '</span><span class="size">' +
-      fmt(f.size) +
-      '</span><button class="dl-btn" data-idx="' +
-      i +
-      '">⬇️</button></div>';
+    const item = document
+      .getElementById("dec-file-item")
+      .content.cloneNode(true);
+    item.querySelector(".dec-file-cb").dataset.idx = i;
+    item.querySelector(".name").textContent = "📄 " + f.name;
+    item.querySelector(".size").textContent = fmt(f.size);
+    item.querySelector(".dl-btn").dataset.idx = i;
+    body.appendChild(item);
   }
-  h += "</div>";
-  decFileList.innerHTML = h;
+
+  decFileList.innerHTML = "";
+  decFileList.appendChild(container);
   decFileList.style.display = "block";
   decBtn.textContent = "✅ 已提取";
 
-  document
-    .getElementById("selectAllDec")
+  decFileList
+    .querySelector(".select-all-dec")
     .addEventListener("change", function () {
-      document
+      decFileList
         .querySelectorAll(".dec-file-cb")
         .forEach((cb) => (cb.checked = this.checked));
       updateSelectionStats();
     });
 
-  document.querySelectorAll(".dec-file-cb").forEach((cb) => {
+  decFileList.querySelectorAll(".dec-file-cb").forEach((cb) => {
     cb.addEventListener("change", updateSelectionStats);
   });
 
   updateSelectionStats();
 
-  document
-    .getElementById("batchDlBtn")
+  decFileList
+    .querySelector(".btn-batch-dl")
     .addEventListener("click", batchDownload);
 
   decFileList.querySelectorAll(".dl-btn").forEach((a) => {

@@ -126,5 +126,75 @@
         中运行，页面刷新不影响任务。
       </div>
     </div>
+
+    <!-- ═══ 模板 ═══ -->
+
+    <!-- 编码文件列表容器 -->
+    <template id="enc-file-container">
+      <div class="enc-file-header">
+        <span class="enc-file-summary"></span>
+      </div>
+      <div class="enc-sort-header">
+        <span>#</span>
+        <span>文件名</span>
+        <span>大小</span>
+        <span class="enc-btn-col"></span>
+      </div>
+      <div class="enc-file-body"></div>
+    </template>
+
+    <!-- 编码文件项 -->
+    <template id="enc-file-item">
+      <div class="file-item" draggable="true">
+        <span class="idx"></span>
+        <span class="name"></span>
+        <span class="size"></span>
+        <button class="file-remove">✕</button>
+      </div>
+    </template>
+
+    <!-- 任务列表空状态 -->
+    <template id="tasks-empty">
+      <div class="tasks-empty">暂无任务</div>
+    </template>
+
+    <!-- 任务项 -->
+    <template id="task-item">
+      <div class="task-item">
+        <div class="task-header">
+          <span class="task-kind"></span>
+          <span class="task-status">运行中…</span>
+        </div>
+        <div class="task-label"></div>
+        <div class="task-file"></div>
+        <div class="tbar-wrap">
+          <div class="tbar"></div>
+        </div>
+        <div class="task-pct"></div>
+      </div>
+    </template>
+
+    <!-- 解码文件列表容器 -->
+    <template id="dec-file-container">
+      <div class="dec-file-header">
+        <label class="select-all-label">
+          <input type="checkbox" class="select-all-dec" checked /> 全选
+        </label>
+        <span class="dec-file-summary"></span>
+        <span class="dec-selected-count"></span>
+        <button class="btn-batch-dl">📥 下载选中</button>
+      </div>
+      <div class="dec-file-body"></div>
+    </template>
+
+    <!-- 解码文件项 -->
+    <template id="dec-file-item">
+      <div class="decode-file-item">
+        <input type="checkbox" class="dec-file-cb" checked />
+        <span class="name"></span>
+        <span class="size"></span>
+        <button class="dl-btn">⬇️</button>
+      </div>
+    </template>
   </body>
 </html>
