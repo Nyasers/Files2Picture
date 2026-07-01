@@ -4,7 +4,6 @@
 
 const _ctx = {
   e: new TextEncoder(),
-  d: new TextDecoder(),
 };
 
 export function fmt(b) {
@@ -307,116 +306,12 @@ export async function readPayload(m, bp, len, chMap) {
   return out;
 }
 
-// ── 元数据流解析（经通道映射的旧格式用）──
+// ── 缓冲区扩展（各解码器通用）──
 
-export async function decMetaStream(m, fc, flags, key, ms, chMap) {
-  const newFmt = ms > 6;
-  const encNameEnc = newFmt && flags & 1;
-  const hasNonces = ms >= 29;
-  const entryMin = hasNonces
-    ? 2 + 8 + 12 + (encNameEnc ? 12 : 0)
-    : newFmt
-      ? 2 + 8
-      : 2 + 4;
-  let buf = await readPayload(m, ms, 65536, chMap);
-  let off = 0;
-  const ent = [];
-
-  for (let i = 0; i < fc; i++) {
-    while (off + entryMin > buf.length) {
-      const more = await readPayload(m, ms + buf.length, 65536, chMap);
-      if (buf.length >= 0x10000000) throw Error("元信息过大");
-      const mg = new Uint8Array(buf.length + more.length);
-      mg.set(buf);
-      mg.set(more, buf.length);
-      buf = mg;
-    }
-    const nl = (buf[off] << 8) | buf[off + 1];
-    off += 2;
-    let nm,
-      dl,
-      nonceData = null;
-    if (encNameEnc) {
-      const encName = buf.subarray(off, off + nl);
-      off += nl;
-      const hi =
-        (buf[off] << 24) |
-        (buf[off + 1] << 16) |
-        (buf[off + 2] << 8) |
-        buf[off + 3];
-      const lo =
-        (buf[off + 4] << 24) |
-        (buf[off + 5] << 16) |
-        (buf[off + 6] << 8) |
-        buf[off + 7];
-      dl = hi * 0x100000000 + (lo >>> 0);
-      off += 8;
-      const nonceName = buf.subarray(off, off + 12);
-      off += 12;
-      const ctr = new Uint8Array(16);
-      ctr.set(nonceName, 0);
-      const decName = await crypto.subtle.decrypt(
-        { name: "AES-CTR", counter: ctr, length: 32 },
-        key,
-        encName,
-      );
-      nm = _ctx.d.decode(new Uint8Array(decName));
-      nonceData = buf.subarray(off, off + 12);
-      off += 12;
-    } else {
-      nm = _ctx.d.decode(buf.subarray(off, off + nl));
-      off += nl;
-      if (hasNonces) {
-        const hi =
-          (buf[off] << 24) |
-          (buf[off + 1] << 16) |
-          (buf[off + 2] << 8) |
-          buf[off + 3];
-        const lo =
-          (buf[off + 4] << 24) |
-          (buf[off + 5] << 16) |
-          (buf[off + 6] << 8) |
-          buf[off + 7];
-        dl = hi * 0x100000000 + (lo >>> 0);
-        off += 8;
-        nonceData = buf.subarray(off, off + 12);
-        off += 12;
-      } else if (newFmt) {
-        const hi =
-          (buf[off] << 24) |
-          (buf[off + 1] << 16) |
-          (buf[off + 2] << 8) |
-          buf[off + 3];
-        const lo =
-          (buf[off + 4] << 24) |
-          (buf[off + 5] << 16) |
-          (buf[off + 6] << 8) |
-          buf[off + 7];
-        dl = hi * 0x100000000 + (lo >>> 0);
-        off += 8;
-      } else {
-        dl =
-          ((buf[off] << 24) |
-            (buf[off + 1] << 16) |
-            (buf[off + 2] << 8) |
-            buf[off + 3]) >>>
-          0;
-        off += 4;
-      }
-    }
-    ent.push({
-      name: nm,
-      size: dl,
-      nonceData: nonceData ? new Uint8Array(nonceData) : null,
-    });
-  }
-
-  const es = newFmt ? 8 : 4;
-  const no = hasNonces ? 12 + (encNameEnc ? 12 : 0) : 0;
-  let accOff = ms + off;
-  for (const e of ent) {
-    e.offset = accOff;
-    accOff += e.size;
-  }
-  return { ent, ds: ms + off };
+export async function extendBuffer(buf, more) {
+  if (buf.length >= 0x10000000) throw Error("元信息过大");
+  const mg = new Uint8Array(buf.length + more.length);
+  mg.set(buf);
+  mg.set(more, buf.length);
+  return mg;
 }

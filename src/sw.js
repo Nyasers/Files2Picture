@@ -48,13 +48,18 @@ self.addEventListener("message", (event) => {
   if (!msg || !msg.type) return;
   if (msg.type === "ping") return;
   switch (msg.type) {
-    case "encode":
+    case "encode": {
       // 同步设 pendingStreams，让 /dl 拦截能找到
+      let pushReady;
+      const pushReadyPromise = new Promise((r) => {
+        pushReady = r;
+      });
       pendingStreams.set(msg.jobId, {
         push: null,
         close: null,
         size: msg.totalSize,
         name: msg.filename,
+        pushReady,
       });
       if (event.source)
         event.source.postMessage({
@@ -62,8 +67,9 @@ self.addEventListener("message", (event) => {
           jobId: msg.jobId,
           name: msg.filename,
         });
-      event.waitUntil(runEncode(event, msg));
+      event.waitUntil(runEncode(event, msg, pushReadyPromise));
       break;
+    }
     case "cancel":
       cancelJob(msg.jobId);
       break;
@@ -122,6 +128,7 @@ self.addEventListener("fetch", (event) => {
                   c.close();
                 } catch {}
               };
+              if (encJob.pushReady) encJob.pushReady();
             },
             cancel() {
               const j = jobs.get(jobId);
@@ -488,7 +495,7 @@ function listJobs() {
 
 // ── 编码 ──
 
-async function runEncode(event, msg) {
+async function runEncode(event, msg, pushReadyPromise) {
   const { files, password, chunkSize = 64, jobId } = msg;
   if (!jobId) return;
   const job = {
@@ -510,20 +517,14 @@ async function runEncode(event, msg) {
     postToClients({ type: "job-error", jobId, error: "下载流不可用" });
     return;
   }
+  // 等 ReadableStream 的 start 回调设 push
+  await Promise.race([
+    pushReadyPromise,
+    new Promise((resolve) => setTimeout(resolve, 10000)),
+  ]);
   if (!pc.push) {
-    await new Promise((resolve) => {
-      const start = Date.now();
-      const check = () => {
-        if (pc.push) resolve();
-        else if (Date.now() - start > 10000) resolve();
-        else setTimeout(check, 5);
-      };
-      check();
-    });
-    if (!pc.push) {
-      postToClients({ type: "job-error", jobId, error: "下载流超时" });
-      return;
-    }
+    postToClients({ type: "job-error", jobId, error: "下载流超时" });
+    return;
   }
   const push = pc.push,
     closeStream = pc.close;
