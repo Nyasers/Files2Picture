@@ -93,7 +93,7 @@ async function staleWhileRevalidate(request, event) {
 
 async function serveIndexFallback(request, event) {
   const url = new URL(request.url);
-  const indexUrl = new URL("/index.html", url.origin).href;
+  const indexUrl = new URL("/", url.origin).href;
   const cache = await caches.open(CACHE_NAME);
   const cached = await cache.match(indexUrl);
   if (cached) {
