@@ -68,19 +68,18 @@ BMP header（54 字节）中的三个关键字段：
 
 ## 架构
 
-编解码在 Service Worker 中执行，页面仅负责 UI 交互。
+编解码在 Service Worker 中执行，页面仅负责 UI 交互。下载通过 SW fetch 拦截 + 302 重定向 + ReadableStream 直出。
 
 ```
-编码流程
-  Page → postMessage(encode, files) → SW 同步设 pendingStream，回复 ready
-  Page → POST /dl（隐藏表单）→ SW fetch 拦截 /dl，创建 ReadableStream
-  SW → runEncode() 异步编码 BMP，push 像素进 stream → 浏览器流式下载
-
-解码流程
-  Page → decodeContainer() 解析 BMP 元信息（纯计算，不写流）
-  Page → postMessage(decode-stream-prepare, params) → SW 同步设 pending 条目
-  Page → POST /dl → SW fetch 创建 ReadableStream，边读 BMP 边解密边推送
+任务信息（文件、密码等） → postMessage → SW 同步设 pending
+<a> → GET /files?id=xxx → SW → 302 /file/<hash>/<filename>
+                          → fileRoutes 记录 hash→job 映射
+浏览器跟随 redirect → GET /file/<hash>/<filename>
+                   → SW 查 fileRoutes → ReadableStream 流式响应
+                   → Content-Disposition: attachment（浏览器用 URL 末尾作保存名）
 ```
+
+批量下载逐个触发，等 SW 的 `job-start` 信号再继续下一个，避免导航互相抢占。
 
 SW 不缓存完整文件，逐 chunk 读写，内存占用稳定在 `chunkSize × 8` 左右。
 

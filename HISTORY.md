@@ -2,6 +2,16 @@
 
 ## 2026-07-01
 
+### 下载派发重构
+
+- **去掉 iframe + POST 表单**：`postViaIframe` → `triggerDownload`（隐藏 `<a>` + `click`）
+- **REST 路径**：`POST /dl`（formData）→ `GET /files?id=xxx[&idx=n]` + `GET /file/<hash>/<filename>`
+- **302 重定向**：`/files` 只做查询和跳转，`/file/` 只做流式响应，职责分离
+- **hash 派生**：`SHA1(id[+idx])` 唯一确定文件，路径不挂 idx
+- **批量串行化**：循环中 `await waitForJobStart`，等 SW 回 `job-start` 信号再触发下一个，消除导航抢占
+- **Content-Disposition 简化**：只写 `attachment` 不写 `filename`，浏览器从 URL 末尾取保存名
+- **清理`download`属性**：回归导航式下载，不依赖 `<a download>`
+
 ### 握手简化 + 增量渲染
 
 - 编码：`encode-stream-prepare` / `encode-stream-ready` 独立握手合并入 `encode` 消息，SW 同步设 pendingStreams 后立即回复 ready，再异步跑 runEncode
