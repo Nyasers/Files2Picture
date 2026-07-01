@@ -80,40 +80,31 @@ navigator.serviceWorker.addEventListener("message", (event) => {
   if (handlers) handlers.forEach((h) => h(msg));
 });
 
-// ── 表单 POST 触发流式下载 ──
+// ── GET 触发流式下载（REST 风格，无 iframe）──
 
-export function postViaIframe(url, fields) {
-  const id =
-    "dlf_" + (Date.now() + "_" + Math.random().toString(36).slice(2, 8));
-  const f = document.createElement("iframe");
-  f.id = id;
-  f.name = id;
-  f.style.display = "none";
-  document.body.appendChild(f);
-  const form = document.createElement("form");
-  form.method = "POST";
-  form.action = url;
-  form.target = id;
-  form.style.display = "none";
-  for (const [n, v] of Object.entries(fields)) {
-    const el = document.createElement("input");
-    el.type = "hidden";
-    el.name = n;
-    el.value = v;
-    form.appendChild(el);
-  }
-  document.body.appendChild(form);
-  form.submit();
-  form.remove();
-  // 等 SW 发来 download-started 信号再拆
-  const jobId = fields.id + (fields.idx !== undefined ? "_" + fields.idx : "");
-  const handler = (e) => {
-    if (e.data.type === "download-started" && e.data.jobId === jobId) {
+export function triggerDownload(url) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+export function waitForJobStart(jobId, timeout = 8000) {
+  return new Promise((resolve) => {
+    const handler = (e) => {
+      if (e.data.type === "job-start" && e.data.jobId === jobId) {
+        navigator.serviceWorker.removeEventListener("message", handler);
+        resolve();
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", handler);
+    setTimeout(() => {
       navigator.serviceWorker.removeEventListener("message", handler);
-      setTimeout(() => f.remove(), 0x0721);
-    }
-  };
-  navigator.serviceWorker.addEventListener("message", handler);
+      resolve();
+    }, timeout);
+  });
 }
 
 // ── 初始化 ──

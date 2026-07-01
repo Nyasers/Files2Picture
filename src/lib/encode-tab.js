@@ -4,7 +4,7 @@
 
 import { fmt } from "./f2p-core.js";
 import { precomputeBmp } from "./f2p-encode.js";
-import { $, toast, sendToSW, waitForSw, postViaIframe } from "./sw-client.js";
+import { $, toast, sendToSW, waitForSw, triggerDownload } from "./sw-client.js";
 import { switchTab } from "./ui-shell.js";
 
 // ── 编码状态 ──
@@ -241,8 +241,8 @@ encBtn.addEventListener("click", async () => {
     return;
   }
 
-  // 踢表单 POST /dl
-  postViaIframe("/dl", { job: "enc", type: "stream", id: jobId });
+  // 踢 GET /files?id=<jobId> 触发流式下载
+  triggerDownload("/files?id=" + jobId);
 
   sel = [];
   updUI();

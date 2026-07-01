@@ -4,7 +4,14 @@
 
 import { fmt } from "./f2p-core.js";
 import { quickDetect, decodeContainer } from "./f2p-decode.js";
-import { $, toast, sendToSW, waitForSw, postViaIframe } from "./sw-client.js";
+import {
+  $,
+  toast,
+  sendToSW,
+  waitForSw,
+  triggerDownload,
+  waitForJobStart,
+} from "./sw-client.js";
 
 // ── 解码状态 ──
 
@@ -217,8 +224,8 @@ async function singleDownload() {
       chunkSize: parseInt(chunkSizeInput.value) || 64,
     });
 
-    // SW 同步设 pending 条目，POST /dl 后 fetch handler 异步等 key 导入
-    postViaIframe("/dl", { job: "dec", type: "stream", id: jobId });
+    // SW 同步设 pending 条目，GET /files?id=<jobId> 触发流式下载
+    triggerDownload("/files?id=" + jobId);
   } catch (e) {
     toast("❌ " + (e.message || "提取失败"));
   }
@@ -265,14 +272,10 @@ async function batchDownload() {
       chunkSize,
     });
 
-    // SW 同步设 pending 条目，逐个 POST /dl 后 fetch handler 异步等 key 导入
+    // SW 同步设 pending 条目，逐个触发，等 job-start 再继续下一个
     for (let i = 0; i < files.length; i++) {
-      postViaIframe("/dl", {
-        job: "dec",
-        type: "stream",
-        id: gid,
-        idx: i,
-      });
+      triggerDownload("/files?id=" + gid + "&idx=" + i);
+      await waitForJobStart(gid + "_" + i);
     }
   } catch (e) {
     toast("❌ " + (e.message || "批量下载失败"));
