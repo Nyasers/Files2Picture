@@ -7,6 +7,8 @@
 
 let swController = null;
 const handlerMap = new Map(); // type -> Set<handler>
+let swRegistration = null;
+let statusTimer = null; // 延迟状态切换的定时器 id
 const readyCallbacks = [];
 const controllerChangeCallbacks = [];
 
@@ -104,23 +106,129 @@ export function triggerDownload(url) {
   navigator.serviceWorker.addEventListener("message", handler);
 }
 
+// ── 状态栏 ──
+
+const SW_COLORS = [
+  "green",
+  "red",
+  "yellow",
+  "blue",
+  "orange",
+  "purple",
+  "gray",
+];
+const SW_COLOR_SET = new Set(SW_COLORS);
+
+// 缓存 DOM 引用，避免重复查询
+let _cachedDot = null;
+let _cachedLabel = null;
+let _cachedStatus = null;
+
+function resolveDot() {
+  return _cachedDot || (_cachedDot = $("swDot"));
+}
+function resolveLabel() {
+  return _cachedLabel || (_cachedLabel = $("swLabel"));
+}
+function resolveStatus() {
+  return _cachedStatus || (_cachedStatus = $("swStatus"));
+}
+
+export function getSWStatus() {
+  const st = resolveStatus();
+  if (!st) return "gray";
+  for (const c of SW_COLORS) {
+    if (st.classList.contains(c)) return c;
+  }
+  return "gray";
+}
+
+function setStatus(color, label) {
+  if (!SW_COLOR_SET.has(color)) color = "gray";
+  // 取消等待中的自动转绿，防止覆盖后续状态变更
+  if (statusTimer) {
+    clearTimeout(statusTimer);
+    statusTimer = null;
+  }
+  const dot = resolveDot();
+  const lbl = resolveLabel();
+  const st = resolveStatus();
+  if (st) {
+    st.classList.remove(...SW_COLORS);
+    st.classList.add(color);
+  }
+  if (dot) {
+    dot.classList.remove(...SW_COLORS);
+    dot.classList.add(color);
+    dot.title = "Service Worker: " + label;
+  }
+  if (lbl) lbl.textContent = label;
+}
+
 // ── 初始化 ──
 
 export function initSW() {
   if (!("serviceWorker" in navigator)) {
+    setStatus("gray", "浏览器不支持");
     toast("⚠️ 当前浏览器不支持 Service Worker");
     return;
   }
-  navigator.serviceWorker.register("sw.js").catch((e) => {
-    console.error("SW 注册失败", e);
-    toast("⚠️ Service Worker 注册失败");
-  });
+
+  // 系统加载时已存在控制器 → 后续 controllerchange 是运行时更新
+  // 不存在（首次访问） → 任何 controllerchange 都是首次激活，不加干扰
+  const hadController = !!navigator.serviceWorker.controller;
+
+  setStatus("yellow", "注册中");
+
+  navigator.serviceWorker
+    .register("sw.js")
+    .then((registration) => {
+      swRegistration = registration;
+      // 检测新版本在 waiting
+      if (registration.waiting) {
+        setStatus("orange", "新版本可用");
+      } else if (navigator.serviceWorker.controller) {
+        setStatus("green", "已就绪");
+      } else if (registration.installing) {
+        setStatus("blue", "安装中");
+      } else {
+        setStatus("blue", "等待激活");
+      }
+
+      // 监听后续更新（页面已有控制器才算新版本）
+      registration.addEventListener("updatefound", () => {
+        const sw = registration.installing;
+        if (!sw) return;
+        if (navigator.serviceWorker.controller)
+          setStatus("orange", "新版本可用");
+        sw.addEventListener("statechange", () => {
+          if (sw.state === "installed" && navigator.serviceWorker.controller) {
+            setStatus("orange", "新版本已就绪");
+          }
+        });
+      });
+    })
+    .catch((e) => {
+      console.error("SW 注册失败", e);
+      setStatus("red", "注册失败");
+      toast("⚠️ Service Worker 注册失败");
+    });
+
   navigator.serviceWorker.addEventListener("controllerchange", () => {
     swController = navigator.serviceWorker.controller;
+    if (hadController) {
+      setStatus("purple", "更新中");
+      statusTimer = setTimeout(() => setStatus("green", "已更新"), 600);
+    }
     controllerChangeCallbacks.forEach((cb) => cb());
   });
+
   navigator.serviceWorker.ready.then(() => {
     swController = navigator.serviceWorker.controller;
+    // 有等待中的新版本时不覆盖（保留橙色提示）
+    if (!swRegistration || !swRegistration.waiting) {
+      setStatus("green", "已就绪");
+    }
     readyCallbacks.forEach((cb) => cb());
   });
 }

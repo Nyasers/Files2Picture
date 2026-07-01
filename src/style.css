@@ -36,6 +36,115 @@ h1 small {
   margin-top: -0.5rem;
   margin-bottom: 1.5rem;
 }
+
+/* ═══ SW 状态栏 ═══ */
+
+.sw-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.sw-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition:
+    background 0.35s,
+    box-shadow 0.35s;
+  background: #444;
+}
+.sw-dot.green {
+  background: #4caf50;
+  box-shadow: 0 0 6px rgba(76, 175, 80, 0.5);
+}
+.sw-dot.red {
+  background: #ff1744;
+  box-shadow: 0 0 6px rgba(255, 23, 68, 0.5);
+}
+.sw-dot.yellow {
+  background: #ffd740;
+  box-shadow: 0 0 6px rgba(255, 215, 64, 0.5);
+  animation: sw-pulse 0.9s ease-in-out infinite;
+}
+.sw-dot.blue {
+  background: #2979ff;
+  box-shadow: 0 0 6px rgba(41, 121, 255, 0.5);
+}
+.sw-dot.orange {
+  background: #ff6d00;
+  box-shadow: 0 0 6px rgba(255, 109, 0, 0.5);
+}
+.sw-dot.purple {
+  background: #d500f9;
+  box-shadow: 0 0 6px rgba(213, 0, 249, 0.5);
+  animation: sw-pulse 0.9s ease-in-out infinite;
+}
+.sw-dot.gray {
+  background: #555;
+}
+
+.sw-label {
+  font-size: 0.75rem;
+  transition: color 0.35s;
+  user-select: none;
+}
+.sw-name {
+  transition: color 0.35s;
+}
+.sw-status.green .sw-label,
+.sw-status.green .sw-name {
+  color: #66bb6a;
+}
+.sw-status.red .sw-label,
+.sw-status.red .sw-name {
+  color: #ff5252;
+}
+.sw-status.yellow .sw-label,
+.sw-status.yellow .sw-name {
+  color: #ffd740;
+}
+.sw-status.blue .sw-label,
+.sw-status.blue .sw-name {
+  color: #448aff;
+}
+.sw-status.orange .sw-label,
+.sw-status.orange .sw-name {
+  color: #ff9100;
+}
+.sw-status.purple .sw-label,
+.sw-status.purple .sw-name {
+  color: #b388ff;
+}
+.sw-status.gray .sw-label,
+.sw-status.gray .sw-name {
+  color: #777;
+}
+
+@keyframes sw-pulse {
+  0%,
+  100% {
+    opacity: 0.6;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sw-dot.yellow,
+  .sw-dot.purple {
+    animation: none;
+  }
+  .sw-dot,
+  .sw-label,
+  .sw-name {
+    transition: none;
+  }
+}
 .grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

@@ -2,6 +2,13 @@
 
 ## 2026-07-01
 
+### Service Worker 指示灯
+
+- 页脚新增 SW 状态指示器，七色圆点 + 文字标签，标签跟随状态变色
+- 状态：不支持/注册中/安装中/等待激活/新版本可用/更新中/已就绪/注册失败
+- 首次激活与运行时更新区分，`classList` 维护状态类，`<div>` 改为 `<span>`
+- 无障碍 `role="status"`，`prefers-reduced-motion` 支持
+
 ### 下载派发重构
 
 - **去掉 iframe + POST 表单**：`postViaIframe` → `triggerDownload`（隐藏 `<a>` + `click`）
