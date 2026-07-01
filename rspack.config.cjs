@@ -18,7 +18,7 @@ module.exports = [
     target: "web",
     output: {
       path: distDir,
-      filename: isDev ? "main.js" : "main.[contenthash:8].js",
+      filename: isDev ? "assets/main.js" : "assets/main.[contenthash:8].js",
       clean: true,
     },
     devServer: {
@@ -39,17 +39,18 @@ module.exports = [
     plugins: [
       new rspack.HtmlRspackPlugin({
         template: "./src/index.html",
-        favicon: "./src/favicon.png",
         inject: true,
       }),
       new rspack.CssExtractRspackPlugin({
-        filename: isDev ? "style.css" : "style.[contenthash:8].css",
+        filename: isDev
+          ? "assets/style.css"
+          : "assets/style.[contenthash:8].css",
       }),
       new rspack.CopyRspackPlugin({
         patterns: [
           {
-            from: path.resolve(__dirname, "src/favicon.png"),
-            to: "favicon.png",
+            from: path.resolve(__dirname, "src/assets"),
+            to: "assets",
           },
         ],
       }),

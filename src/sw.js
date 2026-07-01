@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════
-// F2P Service Worker — 任务执行 + 流式下载
+// F2P Service Worker — 任务执行 + 流式下载 + PWA 缓存
 // ═══════════════════════════════════════════════
 
 import {
@@ -12,10 +12,131 @@ import {
   readPayload,
 } from "./lib/f2p-core.js";
 
-self.addEventListener("install", () => self.skipWaiting());
-self.addEventListener("activate", (event) =>
-  event.waitUntil(self.clients.claim()),
-);
+// ── PWA 缓存配置 ──
+//   每次刷新（/ 和 /index.html）→ 归一化 SWR
+//   /assets/ → SWR + 1hr TTL（session 内不重拉，重启后自动刷新）
+
+const CACHE_NAME = "f2p-v1";
+const ASSET_TTL = 3600000;
+
+// 内存时间戳，SW 重启后清空 → 下次访问后台刷新
+const cacheTimestamps = new Map();
+
+function cacheTimestampSet(url) {
+  const u = new URL(url);
+  cacheTimestamps.set(CACHE_NAME + "::" + u.origin + u.pathname, Date.now());
+}
+
+function isCachedFresh(url) {
+  const u = new URL(url);
+  const ts = cacheTimestamps.get(CACHE_NAME + "::" + u.origin + u.pathname);
+  return ts && Date.now() - ts < ASSET_TTL;
+}
+
+function normalizedUrl(request) {
+  const u = new URL(request.url);
+  u.search = "";
+  u.hash = "";
+  return u.href;
+}
+
+function isCacheableResponse(res) {
+  if (!res || !res.ok) return false;
+  const cc = res.headers.get("Cache-Control") || "";
+  // 跳过 no-store / private / no-cache
+  return !/\b(no-store|private|no-cache)\b/i.test(cc);
+}
+
+function isStreamingRoute(pn) {
+  return pn === "/files" || pn.startsWith("/file/");
+}
+
+function isIndexRoute(pn) {
+  return pn === "/" || pn === "/index.html";
+}
+
+function isStaticAsset(pn) {
+  return pn.startsWith("/assets/");
+}
+
+async function staleWhileRevalidate(request, event) {
+  const cache = await caches.open(CACHE_NAME);
+  const normUrl = normalizedUrl(request);
+  const cached = await cache.match(normUrl);
+  if (cached) {
+    if (isCachedFresh(request.url)) return cached;
+    const updatePromise = fetch(request)
+      .then((res) => {
+        if (isCacheableResponse(res))
+          return cache
+            .put(normUrl, res.clone())
+            .then(() => cacheTimestampSet(request.url));
+      })
+      .catch(() => {});
+    event.waitUntil(updatePromise);
+    return cached;
+  }
+  try {
+    const res = await fetch(request);
+    if (isCacheableResponse(res)) {
+      const putPromise = cache.put(normUrl, res.clone());
+      event.waitUntil(putPromise.then(() => cacheTimestampSet(request.url)));
+    }
+    return res;
+  } catch {
+    return new Response("Offline", {
+      status: 503,
+      headers: { "Content-Type": "text/plain" },
+    });
+  }
+}
+
+async function serveIndexFallback(request, event) {
+  const url = new URL(request.url);
+  const indexUrl = new URL("/index.html", url.origin).href;
+  const cache = await caches.open(CACHE_NAME);
+  const cached = await cache.match(indexUrl);
+  if (cached) {
+    const updatePromise = fetch(indexUrl)
+      .then((r) => isCacheableResponse(r) && cache.put(indexUrl, r.clone()))
+      .catch(() => {});
+    event.waitUntil(updatePromise);
+    return cached;
+  }
+  try {
+    const res = await fetch(indexUrl);
+    if (isCacheableResponse(res))
+      event.waitUntil(cache.put(indexUrl, res.clone()));
+    return res;
+  } catch {
+    return new Response("Offline", {
+      status: 503,
+      headers: { "Content-Type": "text/html" },
+    });
+  }
+}
+
+// ── 原有任务执行 ──
+
+self.addEventListener("install", (event) => {
+  self.skipWaiting();
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    Promise.all([
+      self.clients.claim(),
+      // 清理旧版本缓存
+      caches
+        .keys()
+        .then((keys) =>
+          Promise.all(
+            keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)),
+          ),
+        ),
+    ]),
+  );
+});
 
 const jobs = new Map();
 const pendingStreams = new Map(); // jobId -> { push, close }
@@ -71,13 +192,16 @@ self.addEventListener("message", (event) => {
   }
 });
 
-// ── 流式下载拦截 ──
+// ── 流式下载拦截 + PWA 缓存 ──
 
-self.addEventListener("fetch", (event) => {
+self.addEventListener("fetch", async (event) => {
   const url = new URL(event.request.url);
 
+  // ════════════════════════════════════════
+  // 原有流式下载逻辑（保持不变）
+  // ════════════════════════════════════════
+
   // ── 触发：/files?id=<id>[&idx=<n>] → 302 → /file/<hash>/<filename> ──
-  //   hash 由 id[+idx] 派生，唯一确定文件，路径不再挂 idx。
   if (url.pathname === "/files" && event.request.method === "GET") {
     event.respondWith(
       (async () => {
@@ -105,7 +229,7 @@ self.addEventListener("fetch", (event) => {
           );
         }
 
-        // 分组（hash 含 idx，路径不额外挂）
+        // 分组
         const group = pendingDecodeGroups.get(id);
         if (!group) return new Response("未找到分组", { status: 404 });
         const i = parseInt(idx);
@@ -124,7 +248,6 @@ self.addEventListener("fetch", (event) => {
   }
 
   // ── 响应：/file/<hash>/<filename> ──
-  //   hash → fileRoutes → { id, idx? }，有 idx 走 group 否则单文件。
   if (url.pathname.startsWith("/file/") && event.request.method === "GET") {
     event.respondWith(
       (async () => {
@@ -140,7 +263,24 @@ self.addEventListener("fetch", (event) => {
         return serveStream(route.id);
       })(),
     );
+    return;
   }
+
+  // ════════════════════════════════════════
+  // PWA 缓存：三级策略
+  // ════════════════════════════════════════
+
+  const pn = url.pathname;
+  if (event.request.method === "GET" && !isStreamingRoute(pn)) {
+    if (isIndexRoute(pn)) {
+      // / 和 /index.html 归一化 SWR
+      event.respondWith(serveIndexFallback(event.request, event));
+    } else if (isStaticAsset(pn)) {
+      // /assets/ → SWR + 1hr TTL（session 内不重拉，重启后自动刷新）
+      event.respondWith(staleWhileRevalidate(event.request, event));
+    }
+  }
+  // 其余请求（外部资源等）走默认浏览器行为
 });
 
 // ── 解码流式准备（同步设 pending 条目，key 异步导入推迟到 fetch handler）──
@@ -567,7 +707,6 @@ async function runEncode(event, msg, pushReadyPromise) {
 
     bmp.w32(0x46325034); // F2P4
     bmp.w32(files.length);
-    // F2P4 无 flags 字节，文件名强制加密
     bmp.wChunk(salt);
     bmp.w32(10000);
 

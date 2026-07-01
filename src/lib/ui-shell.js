@@ -22,13 +22,46 @@ $("tabEnc").addEventListener("click", () => switchTab("enc"));
 $("tabDec").addEventListener("click", () => switchTab("dec"));
 $("tabTasks").addEventListener("click", () => switchTab("tasks"));
 
-// ── 分片大小选择器 ──
+// ── 安全 localStorage 封装 ──
 
+function storageGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function storageSet(key, val) {
+  try {
+    localStorage.setItem(key, val);
+  } catch {}
+}
+
+function storageRemove(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch {}
+}
+
+// ── 分片大小选择器（值持久化到 localStorage）──
+
+const STORAGE_KEY = "f2p.chunkSize";
 const chunkSizeInput = $("chunkSize");
 const memHint = $("memHint");
 
+// 恢复上次选择，校验是否为合法选项
+const saved = storageGet(STORAGE_KEY);
+if (saved) {
+  const isValid = Array.from(chunkSizeInput.options).some(
+    (o) => o.value === saved,
+  );
+  if (isValid) chunkSizeInput.value = saved;
+  else storageRemove(STORAGE_KEY);
+}
+
 function updateMemHint() {
-  const kb = parseInt(chunkSizeInput.value) || 64;
+  const kb = parseInt(chunkSizeInput.value, 10) || 64;
   const peak = kb * 8;
   let cls;
   if (peak < 262144) cls = "";
@@ -39,5 +72,12 @@ function updateMemHint() {
   memHint.title = cls ? "内存占用偏高" : "内存占用正常";
 }
 
-chunkSizeInput.addEventListener("change", updateMemHint);
+// 保存 + 即时反馈：change 保底，input 实时
+chunkSizeInput.addEventListener("change", () => {
+  storageSet(STORAGE_KEY, chunkSizeInput.value);
+  updateMemHint();
+});
+chunkSizeInput.addEventListener("input", updateMemHint);
+
+// 初始化时同步一次（localStorage 恢复后）
 updateMemHint();
