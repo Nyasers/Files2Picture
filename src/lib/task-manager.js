@@ -22,7 +22,7 @@ export function refreshTasks() {
 onSWReady(refreshTasks);
 onControllerChange(refreshTasks);
 
-// ── 渲染 ──
+// ── 全量渲染（新增任务 / sync 时用）──
 
 function renderTasks() {
   let entries = Array.from(jobHandlers.entries()).filter(
@@ -39,7 +39,7 @@ function renderTasks() {
   let h = "";
   for (const [jobId, job] of entries) {
     const pct = job.progress || 0;
-    h += '<div class="task-item">';
+    h += '<div class="task-item" data-job-id="' + jobId + '">';
     h +=
       '<div class="task-header"><span class="task-kind">' +
       (job.kind === "encode" ? "🔒 编码" : "🔓 解码") +
@@ -57,6 +57,39 @@ function renderTasks() {
     h += "</div>";
   }
   $("tasksList").innerHTML = h;
+}
+
+// ── 增量更新：只更新进度条和文件名 ──
+
+function updateTaskProgress(jobId, progress, currentFile) {
+  const item = document.querySelector(
+    '.task-item[data-job-id="' + jobId + '"]',
+  );
+  if (!item) return;
+  const bar = item.querySelector(".tbar");
+  if (bar) bar.style.width = progress + "%";
+  const pct = item.querySelector(".task-pct");
+  if (pct) pct.textContent = progress + "%";
+  if (currentFile) {
+    const fileEl = item.querySelector(".task-file");
+    if (fileEl) fileEl.textContent = currentFile;
+  }
+}
+
+// ── 增量删除：移除已完成/错误/取消的任务 ──
+
+function removeTaskItem(jobId) {
+  const item = document.querySelector(
+    '.task-item[data-job-id="' + jobId + '"]',
+  );
+  if (item) {
+    item.remove();
+    // 无剩余任务则显示空状态
+    if (!document.querySelector(".task-item")) {
+      $("tasksList").innerHTML =
+        '<div style="text-align:center;color:#666;padding:20px">暂无任务</div>';
+    }
+  }
 }
 
 // ── 回调 ──
@@ -79,7 +112,7 @@ function handleJobProgress(msg) {
   if (!job) return;
   job.progress = msg.progress;
   if (msg.currentFile) job.currentFile = msg.currentFile;
-  renderTasks();
+  updateTaskProgress(msg.jobId, msg.progress, msg.currentFile);
 }
 
 function handleJobDone(msg) {
@@ -87,7 +120,7 @@ function handleJobDone(msg) {
   if (!job) return;
   sendToSW({ type: "consume", jobId: msg.jobId });
   jobHandlers.delete(msg.jobId);
-  renderTasks();
+  removeTaskItem(msg.jobId);
   if (!msg.jobId.includes("_")) {
     if (job.kind === "encode") toast("✅ 编码完成");
   }
@@ -98,14 +131,14 @@ function handleJobError(msg) {
   if (!job) return;
   sendToSW({ type: "consume", jobId: msg.jobId });
   jobHandlers.delete(msg.jobId);
-  renderTasks();
+  removeTaskItem(msg.jobId);
   toast("❌ " + msg.error);
 }
 
 function handleJobUpdate(msg) {
   if (msg.status === "cancelled") {
     jobHandlers.delete(msg.jobId);
-    renderTasks();
+    removeTaskItem(msg.jobId);
   }
 }
 
