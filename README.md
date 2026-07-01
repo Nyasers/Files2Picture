@@ -5,12 +5,12 @@
 ## 特性
 
 - **加密打包** AES-256-CTR 加密内容，PBKDF2 密钥派生，密码校验加密 magic
-- **超大文件支持** 单文件上限 2^53 - 1，文件数上限 2^32，总 payload 不限
+- **超大文件支持** 单文件上限 2⁵³ − 1，文件数上限 2³²，总 payload 不限
 - **BGRA 原生编码** 数据字节按像素的 BGRA 顺序直接写入，零通道映射开销
 - **32-bit BMP 直写** 每像素 4 字节，Alpha 通道承载数据，密度比 24-bit 高 33%
 - **零填充浪费** 像素区取最大完全平方数 k²（k²×4 ≤ payload），尾部数据以 BMP 额外数据存放，bfSize 停在像素区边界，F2P 自读尾巴
-- **流式处理** Service Worker 拦截 POST /dl，ReadableStream 分块推送，浏览器直写磁盘
-- **按需解码** 解析时只读元信息，点哪个文件再按需提取解密
+- **流式处理** Service Worker 拦截 GET /file/，ReadableStream 分块推送，浏览器直写磁盘
+- **增量渲染** 任务列表、进度条均为增量 DOM 更新，不做全量 innerHTML 重绘
 - **拖拽排序** 编码区文件列表支持拖拽调整顺序，解码顺序与编码一致
 - **编解码分离** 顶部标签切换，互不干扰
 - **纯前端** 所有操作在浏览器完成，不上传服务器
@@ -29,7 +29,7 @@ BMP header（54 字节）中的三个关键字段：
 - `biSizeImage`（offset 34）= `k²×4`，像素区大小
 - 实际文件/流的大小 = `54 + ps`（含尾巴），靠 Content-Length 透传
 
-像素边长 `k = floor(sqrt(floor(ps/4)))`，即满足 `k²×4 ≤ ps` 的最大完全平方数的平方根。像素区被数据完全填满，没有零填充。剩下的 `ps - k²×4` 字节紧跟在像素区后面，解码器越过 bfSize 直接读。
+像素边长 `k = floor(sqrt(floor(ps/4)))`，即满足 `k²×4 ≤ ps` 的最大完全平方数的平方根。像素区被数据完全填满，没有零填充。剩下的 `ps − k²×4` 字节紧跟在像素区后面，解码器越过 bfSize 直接读。
 
 元数据流（位于像素数据头部，全部大端序）：
 
@@ -71,17 +71,64 @@ BMP header（54 字节）中的三个关键字段：
 编解码在 Service Worker 中执行，页面仅负责 UI 交互。下载通过 SW fetch 拦截 + 302 重定向 + ReadableStream 直出。
 
 ```
-任务信息（文件、密码等） → postMessage → SW 同步设 pending
-<a> → GET /files?id=xxx → SW → 302 /file/<hash>/<filename>
-                          → fileRoutes 记录 hash→job 映射
-浏览器跟随 redirect → GET /file/<hash>/<filename>
-                   → SW 查 fileRoutes → ReadableStream 流式响应
-                   → Content-Disposition: attachment（浏览器用 URL 末尾作保存名）
+编码区点击生成 → postMessage encode → SW 同步设 pendingStreams
+              → 回复 encode-stream-ready
+              → triggerDownload("/files?id=<jobId>")
+
+解码区点击下载 → postMessage decode-stream-prepare / decode-group
+              → SW 同步设 pendingDecodeStreams / pendingDecodeGroups
+              → 回复 decode-stream-ready / decode-group-ready
+              → triggerDownload("/files?id=<jobId>[&idx=<n>]")
 ```
 
-批量下载逐个触发，等 SW 的 `job-start` 信号再继续下一个，避免导航互相抢占。
+下载触发链路：
+
+```
+页面: 创建隐藏 iframe，src = /files?id=<xxx>[&idx=<n>]
+ SW:  拦截 GET /files
+      → 查 pendingStreams / pendingDecodeGroups
+      → 派生 hash = SHA1(id[+idx])
+      → 注册 fileRoutes[hash] = { id, idx? }
+      → 302 → /file/<hash>/<filename>
+
+页面: iframe 跟随 302
+ SW:  拦截 GET /file/<hash>/<filename>
+      → 查 fileRoutes，清除条目
+      → 创建 ReadableStream 分块推送
+      → 设置 Content-Disposition: attachment
+      → 浏览器接收流式写入磁盘
+
+ SW:  推送第一块之前 postMessage job-start
+      页面收到 job-start 后移除 iframe
+```
+
+批量下载逐个触发 `triggerDownload`，各 iframe 独立导航互不抢占。
 
 SW 不缓存完整文件，逐 chunk 读写，内存占用稳定在 `chunkSize × 8` 左右。
+
+## 源文件结构
+
+```
+src/
+├── index.html         ← 页面骨架
+├── main.js            ← 入口，import 各模块并注册 SW
+├── style.css          ← 暗色主题样式
+├── sw.js              ← Service Worker：编解码执行 + 流式下载拦截
+└── lib/
+    ├── sw-client.js       ← SW 通信层（消息投递、Toast、triggerDownload）
+    ├── ui-shell.js        ← Tab 切换 + 分片大小选择器
+    ├── task-manager.js    ← 任务列表渲染 + Job 生命周期管理
+    ├── encode-tab.js      ← 编码 Tab：文件选择、拖放、拖拽排序、提交任务
+    ├── decode-tab.js      ← 解码 Tab：图片选择、元信息解析、单文件/批量下载
+    ├── f2p-core.js        ← 核心库（加密工具、BMP 构建/读取、容器检测）
+    ├── f2p-encode.js      ← 编码入口，代理到 f2p4-encode
+    ├── f2p4-encode.js     ← F2P4 编码器（预计算尺寸 + 写入头 + 文件条目）
+    ├── f2p-decode.js      ← 解码入口，自动识别版本派发
+    ├── f2p4-decode.js     ← F2P4 解码器（加密 + 32-bit BGRA 原生）
+    ├── f2p3-decode.js     ← F2P3 解码器（加密 + 32-bit 通道映射）
+    ├── f2p2-decode.js     ← F2P2 解码器（加密 + 24-bit）
+    └── f2p1-decode.js     ← F2P1 解码器（无加密 + 24-bit）
+```
 
 ## 使用
 

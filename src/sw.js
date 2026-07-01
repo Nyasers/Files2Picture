@@ -3,7 +3,6 @@
 // ═══════════════════════════════════════════════
 
 import {
-  fmt,
   deriveEncKey,
   aesEncrypt,
   aesDecrypt,
@@ -24,23 +23,6 @@ const pendingDecodeStreams = new Map(); // jobId -> { bmpFile, key, offset, size
 const pendingDecodeGroups = new Map(); // groupId -> { files: [{offset,size,nonce,name}], key, chunkSize }
 const fileRoutes = new Map(); // hash -> { id, idx }
 let jobIdCounter = 0;
-
-// ── 通知点击 ──
-
-self.addEventListener("notificationclick", (event) => {
-  event.notification.close();
-  const data = event.notification.data || {};
-  event.waitUntil(
-    self.clients
-      .matchAll({ type: "window", includeUncontrolled: true })
-      .then((cs) => {
-        if (cs.length > 0) {
-          cs[0].focus();
-          cs[0].postMessage({ type: "notification-open", jobId: data.jobId });
-        } else self.clients.openWindow("/");
-      }),
-  );
-});
 
 // ── 消息处理 ──
 
@@ -655,14 +637,6 @@ async function runEncode(event, msg, pushReadyPromise) {
       filename: job.filename,
       size: bmp.fs,
     });
-    try {
-      self.registration.showNotification("F2P 编码完成", {
-        body: job.label + " · " + fmt(bmp.fs),
-        icon: "/favicon.png",
-        tag: "f2p-" + jobId,
-        data: { jobId },
-      });
-    } catch {}
   } catch (e) {
     try {
       closeStream();
