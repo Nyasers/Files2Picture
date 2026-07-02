@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════════
 // F2P 解码入口 — 自动识别版本并派发
 // ═══════════════════════════════════════════════
+"use strict";
 
 import { readBmpHeader, readPayload } from "./f2p-core.js";
 import { decodeF2P1 } from "./coders/f2p1-decode.js";

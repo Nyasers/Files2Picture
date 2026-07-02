@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════════
 // 编码 Tab — 文件选择、预计算、提交编码任务
 // ═══════════════════════════════════════════════
+"use strict";
 
 import { fmt } from "./f2p-core.js";
 import { precomputeBmp } from "./f2p-encode.js";
@@ -19,8 +20,9 @@ const encInput = $("encInput"),
   fileList = $("fileList"),
   encBtn = $("encBtn"),
   clearBtn = $("clearBtn");
-const encPwdInput = $("encPwdInput");
-const chunkSizeInput = $("chunkSize");
+const encPwdInput = $("encPwdInput"),
+  chunkSizeInput = $("chunkSize"),
+  encDropText = encDrop.querySelector(".text");
 
 // ── 文件选择 ──
 
@@ -229,6 +231,9 @@ encBtn.addEventListener("click", async () => {
 
   sel = [];
   updUI();
+  // 重置拖放区和按钮状态
+  encDropText.textContent = "拖放文件，或点击选择";
+  encBtn.textContent = "🎨 生成";
   toast("📤 编码任务已提交");
   switchTab("tasks");
 });

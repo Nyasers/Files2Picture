@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════════
 // F2P3 解码器（加密，32-bit，通道映射 [2,1,0,3]）
 // ═══════════════════════════════════════════════
+"use strict";
 
 import {
   readPayload,
@@ -43,7 +44,7 @@ export async function decodeF2P3(file, m, password) {
       const more = await readPayload(m, MS + buf.length, 65536, chMap);
       buf = await extendBuffer(buf, more);
     }
-    let nm, nonceData;
+    let nm, nonceData, size;
     if (encNameEnc) {
       const encName = buf.subarray(off, off + nl);
       off += nl;
@@ -57,7 +58,7 @@ export async function decodeF2P3(file, m, password) {
         (buf[off + 5] << 16) |
         (buf[off + 6] << 8) |
         buf[off + 7];
-      const size = hi * 0x100000000 + (lo >>> 0);
+      size = hi * 0x100000000 + (lo >>> 0);
       off += 8;
       const nameNonce = buf.subarray(off, off + 12);
       off += 12;
@@ -84,7 +85,7 @@ export async function decodeF2P3(file, m, password) {
         (buf[off + 5] << 16) |
         (buf[off + 6] << 8) |
         buf[off + 7];
-      const size = hi * 0x100000000 + (lo >>> 0);
+      size = hi * 0x100000000 + (lo >>> 0);
       off += 8;
       nonceData = buf.subarray(off, off + 12);
       off += 12;

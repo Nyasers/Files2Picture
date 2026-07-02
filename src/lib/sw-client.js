@@ -2,6 +2,7 @@
 // SW 通信层 — Service Worker 生命周期 + 消息投递
 // 所有 UI 模块通过此模块与 SW 交互
 // ═══════════════════════════════════════════════
+"use strict";
 
 // ── 内部状态 ──
 
@@ -84,8 +85,9 @@ navigator.serviceWorker.addEventListener("message", (event) => {
 
 // ── GET 触发流式下载（REST 风格，无 iframe）──
 
+const TRIGGER_TIMEOUT_MS = 30000; // 30s 兜底，慢设备足够
+
 export function triggerDownload(url) {
-  // 先解析 URL 提取 jobId，确保 handler 闭包能读到
   const u = new URL(url, location.origin);
   const idParam = u.searchParams.get("id");
   const idxParam = u.searchParams.get("idx");
@@ -97,13 +99,29 @@ export function triggerDownload(url) {
   document.body.appendChild(f);
   f.src = url;
 
+  // 用 Promise.race 竞争：收到 job-start 则清理，超时也清理
+  let cleanup;
+  const cleanupPromise = new Promise((resolve) => {
+    cleanup = resolve;
+  });
+
   const handler = (e) => {
     if (e.data.type === "job-start" && e.data.jobId === extractedJobId) {
       navigator.serviceWorker.removeEventListener("message", handler);
-      setTimeout(() => f.remove(), 0o0721);
+      cleanup();
     }
   };
   navigator.serviceWorker.addEventListener("message", handler);
+
+  Promise.race([
+    cleanupPromise,
+    new Promise((resolve) => setTimeout(resolve, TRIGGER_TIMEOUT_MS)),
+  ]).then(() => {
+    navigator.serviceWorker.removeEventListener("message", handler);
+    if (f.parentNode) {
+      setTimeout(() => f.remove(), 465); // 0o0721 保持一致的延迟后移除
+    }
+  });
 }
 
 // ── 状态栏 ──

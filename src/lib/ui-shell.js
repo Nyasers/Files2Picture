@@ -1,10 +1,17 @@
 // ═══════════════════════════════════════════════
-// UI 外壳 — Tab 切换 + 分片大小选择器
+// UI 外壳 — Tab 切换 + 分片大小选择器 + 密码可见性
 // ═══════════════════════════════════════════════
+"use strict";
 
 import { $ } from "./sw-client.js";
 
 // ── Tab 切换 ──
+
+function storeTab(tab) {
+  try {
+    sessionStorage.setItem("f2p.tab", tab);
+  } catch {}
+}
 
 export function switchTab(tab) {
   const tabs = ["enc", "dec", "tasks"];
@@ -16,11 +23,21 @@ export function switchTab(tab) {
   const tabMap = { enc: "Enc", dec: "Dec", tasks: "Tasks" };
   $(`tab${tabMap[tab]}`).classList.add("active");
   $(`${tab}Section`).style.display = "";
+  storeTab(tab);
 }
 
 $("tabEnc").addEventListener("click", () => switchTab("enc"));
 $("tabDec").addEventListener("click", () => switchTab("dec"));
 $("tabTasks").addEventListener("click", () => switchTab("tasks"));
+
+// 恢复上次选中的分页（sessionStorage，多标签页互不干扰）
+let restoreTab;
+try {
+  restoreTab = sessionStorage.getItem("f2p.tab");
+} catch {}
+if (restoreTab && ["enc", "dec", "tasks"].includes(restoreTab)) {
+  switchTab(restoreTab);
+}
 
 // ── 安全 localStorage 封装 ──
 
@@ -43,6 +60,22 @@ function storageRemove(key) {
     localStorage.removeItem(key);
   } catch {}
 }
+
+// ── 密码可见性切换 ──
+
+function setupPwdToggle(inputId, toggleId) {
+  const input = $(inputId);
+  const toggle = $(toggleId);
+  if (!input || !toggle) return;
+  toggle.addEventListener("click", () => {
+    const isPw = input.type === "password";
+    input.type = isPw ? "text" : "password";
+    toggle.textContent = isPw ? "👁️" : "🙈";
+  });
+}
+
+setupPwdToggle("encPwdInput", "encPwdToggle");
+setupPwdToggle("decPwdInput", "decPwdToggle");
 
 // ── 分片大小选择器（值持久化到 localStorage）──
 

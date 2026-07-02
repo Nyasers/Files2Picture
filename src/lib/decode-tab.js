@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════════
 // 解码 Tab — 图片选择、元信息解析、提取下载
 // ═══════════════════════════════════════════════
+"use strict";
 
 import { fmt } from "./f2p-core.js";
 import { quickDetect, decodeContainer } from "./f2p-decode.js";

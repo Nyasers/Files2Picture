@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════════
 // F2P Service Worker — 任务执行 + 流式下载 + PWA 缓存
 // ═══════════════════════════════════════════════
+"use strict";
 
 import {
   deriveEncKey,
@@ -11,6 +12,7 @@ import {
   readBmpHeader,
   readPayload,
 } from "./lib/f2p-core.js";
+import { precomputeBmp, writeF2P5Header } from "./lib/f2p-encode.js";
 
 // ── PWA 缓存配置 ──
 //   每次刷新（/ 和 /index.html）→ 归一化 SWR
@@ -679,6 +681,7 @@ async function runEncode(event, msg, pushReadyPromise) {
 
   const pc = pendingStreams.get(jobId);
   if (!pc) {
+    pendingStreams.delete(jobId);
     postToClients({ type: "job-error", jobId, error: "下载流不可用" });
     return;
   }
@@ -688,6 +691,7 @@ async function runEncode(event, msg, pushReadyPromise) {
     new Promise((resolve) => setTimeout(resolve, 1e4)),
   ]);
   if (!pc.push) {
+    pendingStreams.delete(jobId);
     postToClients({ type: "job-error", jobId, error: "下载流超时" });
     return;
   }
@@ -699,52 +703,30 @@ async function runEncode(event, msg, pushReadyPromise) {
     postToClients({ type: "job-start", jobId });
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const encKey = await deriveEncKey(password, salt, 10000);
-    let ms = 32,
-      ds = 0; // magic(4) + fileCount(4) + salt(16) + iter(4) + encMagic(4)
-    for (const f of files) {
-      const nl = new TextEncoder().encode(f.name).length;
-      ms += 2 + nl + 8 + 16 + 16;
-      ds += f.size;
-    }
 
-    const bmp = buildBMPStream(ms + ds, (row) => push(row));
+    // 使用 F2P5 编码器模块计算布局（统一尺寸计算路径）
+    const layout = precomputeBmp(
+      files.map((f) => ({ name: f.name, size: f.size })),
+    );
+    const bmp = buildBMPStream(layout.ms + layout.ds, (row) => push(row));
     push(bmp.header);
 
-    bmp.w32(0x46325035); // F2P5
-    bmp.w32(files.length);
-    bmp.wChunk(salt);
-    bmp.w32(10000);
+    // 生成每文件的 name/data counter
+    const fileCounters = files.map(() => ({
+      name: crypto.getRandomValues(new Uint8Array(16)),
+      data: crypto.getRandomValues(new Uint8Array(16)),
+    }));
 
-    const zeroCtr = new Uint8Array(16);
-    const magicEnc = await aesEncrypt(
-      new Uint8Array([0x46, 0x32, 0x50, 0x35]),
-      encKey,
-      zeroCtr,
-      0,
-      128,
-    );
-    bmp.wChunk(magicEnc);
-
-    const fileCtrs = [];
-    for (const f of files) {
-      const dc = crypto.getRandomValues(new Uint8Array(16));
-      const nb = new TextEncoder().encode(f.name);
-      const nc = crypto.getRandomValues(new Uint8Array(16));
-      const en = await aesEncrypt(nb, encKey, nc, 0, 128);
-      bmp.w16(nb.length);
-      bmp.wChunk(en);
-      bmp.w64(f.size);
-      bmp.wChunk(nc);
-      bmp.wChunk(dc);
-      fileCtrs.push(dc);
-    }
+    // 通过编码器统一入口写元数据头
+    await writeF2P5Header(bmp, salt, encKey, files, fileCounters);
+    const fileCtrs = fileCounters.map((fc) => fc.data);
 
     const ck = chunkSize * 1024;
     let processed = 0;
     for (let i = 0; i < files.length; i++) {
       const f = files[i],
         dc = fileCtrs[i];
-      job.currentFile = f.name;
+      job.currentFile = "[" + (i + 1) + "/" + files.length + "] " + f.name;
       let pos = 0;
       while (pos < f.size) {
         if (job.cancelled) throw Error("cancel");
@@ -754,15 +736,17 @@ async function runEncode(event, msg, pushReadyPromise) {
         bmp.wChunk(enc);
         pos = end;
         const done = processed + pos;
-        const pct = ds > 0 ? Math.min(100, ((done / ds) * 100) | 0) : 100;
+        const totalData = layout.ds;
+        const pct =
+          totalData > 0 ? Math.min(100, ((done / totalData) * 100) | 0) : 100;
         job.progress = pct;
         postToClients({
           type: "job-progress",
           jobId,
           progress: pct,
           done,
-          total: ds,
-          currentFile: f.name,
+          total: totalData,
+          currentFile: "[" + (i + 1) + "/" + files.length + "] " + f.name,
         });
       }
       processed += f.size;
@@ -787,10 +771,13 @@ async function runEncode(event, msg, pushReadyPromise) {
     try {
       closeStream();
     } catch {}
+    pendingStreams.delete(jobId);
     if (e.message === "cancel") {
+      jobs.delete(jobId);
       job.status = "cancelled";
       postToClients({ type: "job-update", jobId, status: "cancelled" });
     } else {
+      jobs.delete(jobId);
       job.status = "error";
       job.error = e.message;
       console.error(e);

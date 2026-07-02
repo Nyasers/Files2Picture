@@ -2,6 +2,52 @@
 
 ## 2026-07-02
 
+### F2P5 格式升级 + 任务历史 + 质量加固
+
+**F2P5 格式升级**
+
+- 魔数 `0x46325034` → `0x46325035`（F2P5）
+- AES-CTR 从 short counter（96-bit?）升级为 **128-bit 完整 counter**，name/data nonce（12B）→ name/data counter（16B），counter 宽度与密钥块一致，无截断无溢出
+- `buildCtr` 重构：接受 `bits` 参数，`normalizeBits` 统一边界（1-128），partial byte 掩码保留 nonce 高位，与 WebCrypto `length` 语义对齐
+- 统一编码入口：`f2p5-encode.js` 提供 `precomputeBmp` + `writeF2P5Header`，SW 编码路径改用此模块，消除内联布局计算与编码器之间的差异
+- 新增 `f2p5-decode.js`，解码入口 `decodeContainer` 优先检测 F2P5
+- `f2p-encode.js` 代理到 `coders/f2p5-encode.js`，`f2p4-encode.js` 不再存在
+
+**密码 UI 增强**
+
+- 密码 input 从 `type="text"` 改为 `type="password"`，加 `autocomplete="off"`
+- 新增密码可见性切换按钮（🙈 / 👁️），`ui-shell.js` 中 `setupPwdToggle` 统一处理编码/解码两个输入框
+- CSS 新增 `.pwd-toggle` 按钮样式
+
+**Tab 状态持久化**
+
+- 当前标签页信息写入 `sessionStorage`（`f2p.tab`），页面刷新后自动恢复
+- 多标签页互不干扰，`switchTab` 统一管理持久化
+
+**任务历史系统**
+
+- `task-manager.js` 全面重构：完成/错误/取消的任务不再被移除，而是移入 `taskHistory[]`
+- 保留最近 50 条记录，active jobs 在上方、history 在下方以 `opacity: 0.7` 区分
+- `renderTasks()` 全量渲染取代 `removeTaskItem()` 增量删除
+- 已取消任务 (`job-update status=cancelled`) 正确进入历史，不再静默消失
+- `.task-item.history` CSS 给历史任务视觉区分
+
+**健壮性加固**
+
+- 全模块添加 `"use strict"`（15 个文件全部加严）
+- `f2p2-decode.js` / `f2p3-decode.js` 修复 `const size` hoisting 问题（`size` 在 if/else 分支各用 `const` 声明，无法在分支外访问 → 改为外层 `let size`）
+- `sw.js` 中 `pendingStreams.delete(jobId)` 加入异常/超时路径清理，防止内存泄漏
+- `jobs.delete(jobId)` 加入 cancel/error 处理器，取消后正确移除 job
+- `serveEncodeStream` 的 `cancel()` 回调异步设 status，与 `job-update` 消息路径一致
+
+**编码 UI 重置**
+
+- 编码提交后重置拖放区文字为「拖放文件，或点击选择」、按钮文字为「🎨 生成」
+
+**进度显示优化**
+
+- 多文件编码时 `currentFile` 改为 `[i/n] filename` 格式，清晰指示当前处理到第几个文件
+
 ### 修复：尾巴数据错序导致的 hash 不一致
 
 **问题**：文件编码后编解码 hash 不一致，分块越大越明显。

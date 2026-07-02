@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════════
 // F2P 核心库 — 页面 + SW 共用
 // ═══════════════════════════════════════════════
+"use strict";
 
 const _ctx = {
   e: new TextEncoder(),
@@ -37,25 +38,52 @@ export async function deriveEncKey(password, salt, iterations, extractable) {
   );
 }
 
-function buildCtr(counter, blockOff) {
+function buildCtr(counter, blockOff, bits) {
   const ctr = new Uint8Array(16);
   ctr.set(counter, 0);
+  const cBits = normalizeBits(bits);
+  // counter 至少占 1 个完整字节（ceil），多出的位用掩码截断
+  const cBytes = Math.ceil(cBits / 8);
+  // 只操作最后 cBytes 字节，与 WebCrypto length 语义一致
   let val = 0n;
-  for (let i = 0; i < 16; i++) {
+  const start = 16 - cBytes;
+  for (let i = start; i < 16; i++) {
     val = (val << 8n) | BigInt(ctr[i]);
   }
   val += BigInt(Math.trunc(blockOff));
-  for (let i = 15; i >= 0; i--) {
+  // 截断到 counter 宽度，防止进位传播到 nonce 区域
+  if (cBits < 128) {
+    const mask = (1n << BigInt(cBits)) - 1n;
+    val &= mask;
+  }
+  for (let i = 15; i >= start; i--) {
     ctr[i] = Number(val & 0xffn);
     val >>= 8n;
+  }
+  // 非整字节时保留最高位 counter 字节中的 nonce 位
+  if (cBits < 128) {
+    const partialBits = cBits % 8;
+    if (partialBits !== 0) {
+      const mask = (1 << partialBits) - 1;
+      ctr[start] = (counter[start] & ~mask) | (ctr[start] & mask);
+    }
   }
   return ctr;
 }
 
+function normalizeBits(bits) {
+  return Math.max(1, Math.min(128, bits || 128));
+}
+
 export async function aesEncrypt(plain, key, counter, blockOff, bits) {
+  const nb = normalizeBits(bits);
   return new Uint8Array(
     await crypto.subtle.encrypt(
-      { name: "AES-CTR", counter: buildCtr(counter, blockOff), length: bits },
+      {
+        name: "AES-CTR",
+        counter: buildCtr(counter, blockOff, nb),
+        length: nb,
+      },
       key,
       plain,
     ),
@@ -63,9 +91,14 @@ export async function aesEncrypt(plain, key, counter, blockOff, bits) {
 }
 
 export async function aesDecrypt(data, key, counter, blockOff, bits) {
+  const nb = normalizeBits(bits);
   return new Uint8Array(
     await crypto.subtle.decrypt(
-      { name: "AES-CTR", counter: buildCtr(counter, blockOff), length: bits },
+      {
+        name: "AES-CTR",
+        counter: buildCtr(counter, blockOff, nb),
+        length: nb,
+      },
       key,
       data,
     ),
@@ -87,7 +120,7 @@ export async function readChunk(file, start, end, trySize) {
       mg.set(b, a.length);
       return mg;
     }
-    throw new Error("无法读取文件");
+    throw new Error("读取文件失败: " + file.name + " @" + start + "-" + end);
   }
 }
 
@@ -123,6 +156,7 @@ export function buildBMPStream(payloadSize, onRow) {
   const v = new DataView(hdr);
   v.setUint8(0, 0x42);
   v.setUint8(1, 0x4d);
+  // bfSize 是 32-bit 字段，>4GB 时截断为 0xFFFFFFFF（BMP 解析器一般不用这个字段）
   v.setUint32(2, bfSize > 0xffffffff ? 0xffffffff : bfSize, true);
   v.setUint16(6, 0, true);
   v.setUint16(8, 0, true);
@@ -312,8 +346,15 @@ export async function readPayload(m, bp, len, chMap) {
 
 // ── 缓冲区扩展（各解码器通用）──
 
-export async function extendBuffer(buf, more) {
-  if (buf.length >= 0x10000000) throw Error("元信息过大");
+export async function extendBuffer(buf, more, fileCount) {
+  if (buf.length >= 0x10000000)
+    throw Error(
+      "元信息大小超过上限 (256MB)，" +
+        (fileCount != null
+          ? "当前 " + fileCount + " 个文件"
+          : "可能是文件数量过多") +
+        "，请确认 BMP 格式正确",
+    );
   const mg = new Uint8Array(buf.length + more.length);
   mg.set(buf);
   mg.set(more, buf.length);
