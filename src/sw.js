@@ -63,7 +63,10 @@ async function bulkSetHashes(manifest) {
     const store = tx.objectStore(STORE_NAME);
     store.clear();
     Object.entries(manifest).forEach(([key, hash]) => store.put({ key, hash }));
-    tx.oncomplete = resolve;
+    tx.oncomplete = () => {
+      cachedPaths = new Map(Object.entries(manifest));
+      resolve();
+    };
     tx.onerror = () => reject(tx.error);
   });
 }
@@ -98,6 +101,25 @@ function fetchWithTimeout(url, ms) {
   );
 }
 
+// ── 路径白名单（path → hash，与 IndexedDB 同步）──
+
+let cachedPaths = new Map();
+
+// SW 启动时从 IDB 恢复白名单
+// 异步执行，加载完成前所有请求走默认浏览器行为
+getAllHashes().then(
+  (hashes) => {
+    cachedPaths = new Map(Object.entries(hashes));
+  },
+  () => {},
+);
+
+// ── 路径归一化 ──
+
+function resolvePath(pn) {
+  return pn === "/" ? "/index.html" : pn;
+}
+
 // ── Manifest 同步 ──
 
 async function syncManifest() {
@@ -127,29 +149,18 @@ async function syncUpdate(manifest) {
   );
   if (updates.length === 0) return;
   const results = await Promise.allSettled(
-    updates.map(([key]) =>
+    updates.map(([key, hash]) =>
       workOnce(key, async () => {
         const cache = await caches.open(CACHE_NAME);
         const res = await fetchWithTimeout(key);
-        if (res.ok) await cache.put(key, res.clone());
+        if (res.ok) await cache.put(key + "?h=" + hash, res.clone());
         return res;
       }),
     ),
   );
 
-  // 持久化：成功 → 新 hash，失败 → 保留旧 hash / 从未存在的则移除
-  const toPersist = { ...manifest };
-  for (let i = 0; i < updates.length; i++) {
-    const [key] = updates[i];
-    if (results[i].status === "rejected") {
-      if (oldHashes[key] !== undefined) {
-        toPersist[key] = oldHashes[key]; // 已有旧版本，保留旧 hash → 下次激活重试
-      } else {
-        delete toPersist[key]; // 首次安装失败，从 hash 表移除 → 下次激活重新发现差异
-      }
-    }
-  }
-  await bulkSetHashes(toPersist);
+  // 全量写 IDB（hash 即缓存键，不一致时下次访问自动回源，无需保留旧 hash）
+  await bulkSetHashes(manifest);
 
   const failed = results.filter((r) => r.status === "rejected");
   if (failed.length > 0)
@@ -168,7 +179,6 @@ async function syncUpdate(manifest) {
 async function cleanupOrphans() {
   const manifest = await getAllHashes();
   // 防误判：manifest 为空或条目极少时可能是 IDB 事务异常（clear 后 abort）
-  // 此时跳过清理，避免删光整个缓存
   if (Object.keys(manifest).length < 3) {
     console.warn(
       "cleanupOrphans: manifest 条目过少(" +
@@ -177,18 +187,19 @@ async function cleanupOrphans() {
     );
     return;
   }
-  const validPaths = new Set(Object.keys(manifest));
-  // / 和 /index.html 互为别名，只认其中一个会导致另一个被误删
-  if (validPaths.has("/index.html")) validPaths.add("/");
-  if (validPaths.has("/")) validPaths.add("/index.html");
   const cache = await caches.open(CACHE_NAME);
   const requests = await cache.keys();
   return Promise.all(
     requests
       .filter((req) => {
-        const pn = new URL(req.url).pathname;
+        const u = new URL(req.url);
+        const pn = u.pathname;
         // 保留流式下载相关的缓存（/file/ 路径）
-        return !validPaths.has(pn) && !pn.startsWith("/file/");
+        if (pn.startsWith("/file/")) return false;
+        const expectedHash = manifest[pn];
+        if (expectedHash === undefined) return true; // 不在 manifest → 孤儿
+        const actualHash = u.searchParams.get("h");
+        return actualHash !== expectedHash; // hash 不匹配 → 旧版本
       })
       .map((req) => cache.delete(req)),
   );
@@ -204,15 +215,18 @@ function isManifestRoute(pn) {
   return pn === MANIFEST_URL;
 }
 
-// ── 缓存服务 ──
+// ── 缓存服务（仅对白名单内的路径调用）──
 
 async function serveFromCache(request, event) {
   const cache = await caches.open(CACHE_NAME);
-  const cached = await cache.match(request);
+  const pn = resolvePath(new URL(request.url).pathname);
+  const hash = cachedPaths.get(pn);
+  const cacheUrl = pn + "?h=" + hash;
+  const cached = await cache.match(cacheUrl);
   if (cached) return cached;
   try {
     const res = await fetch(request);
-    if (res.ok) event?.waitUntil(cache.put(request, res.clone()));
+    if (res.ok) event?.waitUntil(cache.put(cacheUrl, res.clone()));
     return res;
   } catch {
     return new Response("Offline", {
@@ -386,11 +400,11 @@ self.addEventListener("fetch", async (event) => {
             }),
         ),
       );
-    } else {
+    } else if (cachedPaths.has(resolvePath(pn))) {
       event.respondWith(serveFromCache(event.request, event));
     }
+    // 不在白名单 → 走默认浏览器行为，不拦截
   }
-  // 其余请求走默认浏览器行为
 });
 
 // ── 解码流式准备（同步设 pending 条目，key 异步导入推迟到 fetch handler）──

@@ -3,6 +3,7 @@
 
 const rspack = require("@rspack/core");
 const path = require("path");
+const { execSync } = require("child_process");
 
 const isDev = process.env.NODE_ENV === "development";
 const distDir = path.resolve(__dirname, "dist");
@@ -84,5 +85,21 @@ module.exports = [
       filename: "sw.js",
     },
     optimization: isDev ? { minimize: false } : { minimize: true },
+    plugins: [
+      {
+        apply(compiler) {
+          compiler.hooks.afterDone.tap("GenerateHashes", () => {
+            try {
+              execSync(
+                'node "' +
+                  __dirname.replace(/\\/g, "/") +
+                  '/scripts/generate-hashes.mjs"',
+                { stdio: "inherit", cwd: __dirname },
+              );
+            } catch {}
+          });
+        },
+      },
+    ],
   },
 ];
