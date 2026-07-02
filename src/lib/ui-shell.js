@@ -61,22 +61,6 @@ function storageRemove(key) {
   } catch {}
 }
 
-// ── 密码可见性切换 ──
-
-function setupPwdToggle(inputId, toggleId) {
-  const input = $(inputId);
-  const toggle = $(toggleId);
-  if (!input || !toggle) return;
-  toggle.addEventListener("click", () => {
-    const isPw = input.type === "password";
-    input.type = isPw ? "text" : "password";
-    toggle.textContent = isPw ? "👁️" : "🙈";
-  });
-}
-
-setupPwdToggle("encPwdInput", "encPwdToggle");
-setupPwdToggle("decPwdInput", "decPwdToggle");
-
 // ── 分片大小选择器（值持久化到 localStorage）──
 
 const STORAGE_KEY = "f2p.chunkSize";

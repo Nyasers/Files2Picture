@@ -416,27 +416,7 @@ label {
 .pwd-input:focus {
   border-color: #4a4aff;
 }
-.pwd-toggle {
-  background: transparent;
-  border: 1px solid #3a3a3a;
-  color: #888;
-  padding: 6px 10px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 0.9rem;
-  line-height: 1;
-  flex-shrink: 0;
-  margin-bottom: 6px;
-}
-.pwd-toggle:hover {
-  background: #2a2a2a;
-  border-color: #555;
-}
-.pwd-toggle:focus-visible {
-  outline: 2px solid #7a7aff;
-  outline-offset: 2px;
-  border-color: #4a4aff;
-}
+
 .btn {
   flex: 1;
   background: #4a4aff;
