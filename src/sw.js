@@ -140,24 +140,24 @@ self.addEventListener("install", (event) => {
       Promise.allSettled(
         ["/"].map((url) =>
           fetch(url)
-            .then((res) => (res.ok ? res.text() : null))
-            .then((html) => {
-              if (!html) return;
-              const urls = [...assetUrlSet(html)];
-              // ② 新 JS/CSS 先全部入缓存
-              return Promise.allSettled(
-                urls.map((u) =>
-                  fetch(u)
-                    .then((r) => {
-                      if (isCacheableResponse(r)) return cache.put(u, r);
-                    })
-                    .catch(() => {}),
-                ),
-              ).then(() => {
-                // ③ 资源就绪，再把新 index 写入缓存
-                //    重新 fetch 因为 body 已被消费
-                return fetch(url).then((r) => {
-                  if (isCacheableResponse(r)) return cache.put(url, r);
+            .then((res) => {
+              if (!res.ok) return;
+              // clone 一份用于后续缓存，body 读文本提取资源 URL
+              const clone = res.clone();
+              return res.text().then((html) => {
+                const urls = [...assetUrlSet(html)];
+                // ② 新 JS/CSS 先全部入缓存
+                return Promise.allSettled(
+                  urls.map((u) =>
+                    fetch(u)
+                      .then((r) => {
+                        if (isCacheableResponse(r)) return cache.put(u, r);
+                      })
+                      .catch(() => {}),
+                  ),
+                ).then(() => {
+                  // ③ 资源就绪，写回缓存的 clone
+                  return cache.put(url, clone);
                 });
               });
             })

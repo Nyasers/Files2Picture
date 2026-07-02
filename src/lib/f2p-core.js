@@ -287,6 +287,7 @@ export async function readBmpHeader(blob) {
   const bpp = v.getUint16(28, true);
   if (bpp !== 24 && bpp !== 32) throw Error("仅支持 24/32-bit BMP");
   const po = v.getUint32(10, true);
+  if (po !== 54) throw Error("像素偏移异常，仅支持标准 BMP");
   const w = v.getInt32(18, true);
   const hr = v.getInt32(22, true);
   const h = hr < 0 ? -hr : hr;
