@@ -4,7 +4,6 @@
 const rspack = require("@rspack/core");
 const path = require("path");
 const { execSync } = require("child_process");
-
 const isDev = process.env.NODE_ENV === "development";
 const distDir = path.resolve(__dirname, "dist");
 
@@ -89,13 +88,18 @@ module.exports = [
       {
         apply(compiler) {
           compiler.hooks.afterDone.tap("GenerateHashes", () => {
+            const dir = __dirname.replace(/\\/g, "/");
             try {
-              execSync(
-                'node "' +
-                  __dirname.replace(/\\/g, "/") +
-                  '/scripts/generate-hashes.mjs"',
-                { stdio: "inherit", cwd: __dirname },
-              );
+              execSync(`node "${dir}/scripts/minify-html.mjs"`, {
+                stdio: "inherit",
+                cwd: __dirname,
+              });
+            } catch {}
+            try {
+              execSync(`node "${dir}/scripts/generate-hashes.mjs"`, {
+                stdio: "inherit",
+                cwd: __dirname,
+              });
             } catch {}
           });
         },

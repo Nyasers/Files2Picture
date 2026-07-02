@@ -163,6 +163,12 @@
           var main = document.querySelector("main");
           if (main) main.removeAttribute("hidden");
         };
+
+        /* 兜底：10s 后如果 main.js 还没调 deloading，自动退出 */
+        setTimeout(function () {
+          if (typeof window.deloading === "function")
+            window.deloading("opacity 1.2s ease-in");
+        }, 1e4);
       </script>
     </div>
 

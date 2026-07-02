@@ -131,8 +131,12 @@ async function syncManifest() {
       for (const [key, hash] of Object.entries(raw)) m["/" + key] = hash;
       return m;
     })
-    .then((manifest) => syncUpdate(manifest).then(() => manifest))
-    .then((manifest) => cleanupOrphans().then(() => manifest))
+    .then((manifest) =>
+      syncUpdate(manifest).then((failedPaths) => ({ manifest, failedPaths })),
+    )
+    .then(({ manifest, failedPaths }) =>
+      cleanupOrphans(failedPaths).then(() => manifest),
+    )
     .then(
       (manifest) => (
         setTimeout(() => delete syncManifest.promise, 6e4),
@@ -148,37 +152,49 @@ async function syncUpdate(manifest) {
     ([key, hash]) => oldHashes[key] !== hash,
   );
   if (updates.length === 0) return;
+
+  // 标记哪些路径的 fetch 失败，cache 不写、cleanup 也不删
+  const failedPaths = new Set();
+
   const results = await Promise.allSettled(
     updates.map(([key, hash]) =>
       workOnce(key, async () => {
         const cache = await caches.open(CACHE_NAME);
         const res = await fetchWithTimeout(key);
         if (res.ok) await cache.put(key + "?h=" + hash, res.clone());
+        else failedPaths.add(key);
         return res;
       }),
     ),
   );
 
-  // 全量写 IDB（hash 即缓存键，不一致时下次访问自动回源，无需保留旧 hash）
+  results.forEach((r, i) => {
+    if (r.status === "rejected") failedPaths.add(updates[i][0]);
+  });
+
+  // IDB 总是写入最新 manifest（hash 不匹配 = 下次访问自动回源，不是数据丢失）
   await bulkSetHashes(manifest);
 
-  const failed = results.filter((r) => r.status === "rejected");
-  if (failed.length > 0)
+  const failedCount = failedPaths.size;
+  if (failedCount > 0)
     console.warn(
-      "syncUpdate: " + failed.length + "/" + updates.length + " files 失败",
-      failed.map((r) => r.reason?.message),
+      "syncUpdate: " + failedCount + "/" + updates.length + " files 失败",
+      [...failedPaths],
     );
-  if (updates.length > failed.length)
+
+  const succeededCount = updates.length - failedCount;
+  if (succeededCount > 0)
     self.clients
       .matchAll()
       .then((clients) =>
         clients.forEach((client) => client.postMessage({ type: "sw-updated" })),
       );
+
+  return failedPaths; // 传给 cleanupOrphans
 }
 
-async function cleanupOrphans() {
+async function cleanupOrphans(failedPaths) {
   const manifest = await getAllHashes();
-  // 防误判：manifest 为空或条目极少时可能是 IDB 事务异常（clear 后 abort）
   if (Object.keys(manifest).length < 3) {
     console.warn(
       "cleanupOrphans: manifest 条目过少(" +
@@ -194,12 +210,13 @@ async function cleanupOrphans() {
       .filter((req) => {
         const u = new URL(req.url);
         const pn = u.pathname;
-        // 保留流式下载相关的缓存（/file/ 路径）
         if (pn.startsWith("/file/")) return false;
+        // fetch 失败的路径保留旧缓存，不删
+        if (failedPaths?.has(pn)) return false;
         const expectedHash = manifest[pn];
-        if (expectedHash === undefined) return true; // 不在 manifest → 孤儿
+        if (expectedHash === undefined) return true;
         const actualHash = u.searchParams.get("h");
-        return actualHash !== expectedHash; // hash 不匹配 → 旧版本
+        return actualHash !== expectedHash;
       })
       .map((req) => cache.delete(req)),
   );
