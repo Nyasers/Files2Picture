@@ -161,7 +161,7 @@ async function syncUpdate(manifest) {
       workOnce(key, async () => {
         const cache = await caches.open(CACHE_NAME);
         const res = await fetchWithTimeout(key);
-        if (res.ok) await cache.put(key + "?h=" + hash, res.clone());
+        if (res.ok) await cache.put(key + "#" + hash, res.clone());
         else failedPaths.add(key);
         return res;
       }),
@@ -215,7 +215,7 @@ async function cleanupOrphans(failedPaths) {
         if (failedPaths?.has(pn)) return false;
         const expectedHash = manifest[pn];
         if (expectedHash === undefined) return true;
-        const actualHash = u.searchParams.get("h");
+        const actualHash = u.hash.slice(1);
         return actualHash !== expectedHash;
       })
       .map((req) => cache.delete(req)),
@@ -238,7 +238,7 @@ async function serveFromCache(request, event) {
   const cache = await caches.open(CACHE_NAME);
   const pn = resolvePath(new URL(request.url).pathname);
   const hash = cachedPaths.get(pn);
-  const cacheUrl = pn + "?h=" + hash;
+  const cacheUrl = pn + "#" + hash;
   const cached = await cache.match(cacheUrl);
   if (cached) return cached;
   try {
