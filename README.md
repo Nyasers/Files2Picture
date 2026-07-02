@@ -125,7 +125,7 @@ src/
 ├── sw.js              ← Service Worker：编解码执行 + 流式下载拦截 + PWA 缓存
 └── lib/
     ├── sw-client.js       ← SW 通信层（消息投递、Toast、triggerDownload、状态指示灯）
-    ├── ui-shell.js        ← Tab 切换 + sessionStorage 状态保持 + 密码可见性切换
+    ├── ui-shell.js        ← Tab 切换 + sessionStorage 状态保持 + 分片大小选择器
     ├── task-manager.js    ← 任务列表渲染 + Job 生命周期管理 + 任务历史
     ├── encode-tab.js      ← 编码 Tab：文件选择、拖放、拖拽排序、提交任务
     ├── decode-tab.js      ← 解码 Tab：图片选择、元信息解析、单文件/批量下载
