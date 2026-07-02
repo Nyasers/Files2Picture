@@ -61,6 +61,30 @@ function storageRemove(key) {
   } catch {}
 }
 
+// ── 分片大小预设 ──
+
+const CHUNK_SIZES = [
+  64, 256, 1024, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 24576, 32768,
+  49152, 65536, 98304, 131072, 196608, 262144, 393216, 524288, 786432, 1048576,
+  1572864, 2097152, 3145728, 3932160,
+];
+
+function fmtChunkSize(kb) {
+  return kb < 1024 ? `${kb} KB` : `${kb / 1024} MB`;
+}
+
+function populateChunkSizes() {
+  const sel = $("chunkSize");
+  CHUNK_SIZES.forEach((val) => {
+    const opt = document.createElement("option");
+    opt.value = val;
+    opt.textContent = fmtChunkSize(val);
+    sel.appendChild(opt);
+  });
+}
+
+populateChunkSizes();
+
 // ── 分片大小选择器（值持久化到 localStorage）──
 
 const STORAGE_KEY = "f2p.chunkSize";
