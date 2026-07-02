@@ -1,9 +1,9 @@
 // ═══════════════════════════════════════════════
-// F2P 编码入口 — 调用最新版本编码器（F2P4）
+// F2P 编码入口 — 调用最新版本编码器（F2P5）
 // ═══════════════════════════════════════════════
 
 export {
   precomputeBmp,
   createBmpWriter,
-  writeF2P4Header,
-} from "./f2p4-encode.js";
+  writeF2P5Header,
+} from "./coders/f2p5-encode.js";

@@ -207,7 +207,8 @@ async function singleDownload() {
       bmpFile: decFile,
       offset: ent.offset,
       size: ent.size,
-      nonce: ent.nonceData ? Array.from(ent.nonceData) : null,
+      counter: ent.counter ? Array.from(ent.counter) : null,
+      bits: ent.bits || 0,
       name: ent.name,
       keyRaw: rawKey ? Array.from(new Uint8Array(rawKey)) : null,
       chunkSize: parseInt(chunkSizeInput.value) || 64,
@@ -245,9 +246,10 @@ async function batchDownload() {
     const files = indices.map((idx) => ({
       offset: decEntries[idx].offset,
       size: decEntries[idx].size,
-      nonce: decEntries[idx].nonceData
-        ? Array.from(decEntries[idx].nonceData)
+      counter: decEntries[idx].counter
+        ? Array.from(decEntries[idx].counter)
         : null,
+      bits: decEntries[idx].bits || 0,
       name: decEntries[idx].name,
     }));
     const gid = Date.now() + "";

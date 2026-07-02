@@ -7,7 +7,7 @@ import {
   extendBuffer,
   deriveEncKey,
   aesDecrypt,
-} from "./f2p-core.js";
+} from "../f2p-core.js";
 
 export async function decodeF2P3(file, m, password) {
   const chMap = [2, 1, 0, 3];
@@ -20,7 +20,7 @@ export async function decodeF2P3(file, m, password) {
 
   const key = await deriveEncKey(password, salt, iter, true);
   const me = await readPayload(m, 29, 4, chMap);
-  const md = await aesDecrypt(me, key, salt.subarray(0, 12), 0);
+  const md = await aesDecrypt(me, key, salt.subarray(0, 12), 0, 32);
   if (md[0] !== 0x46 || md[1] !== 0x32 || md[2] !== 0x50 || md[3] !== 0x33)
     throw Error("密码错误");
 

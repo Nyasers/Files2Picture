@@ -2,7 +2,7 @@
 // F2P1 解码器（无加密，24-bit）
 // ═══════════════════════════════════════════════
 
-import { readPayload, extendBuffer } from "./f2p-core.js";
+import { readPayload, extendBuffer } from "../f2p-core.js";
 
 export async function decodeF2P1(file, m) {
   const chMap = [2, 1, 0];
@@ -35,7 +35,7 @@ export async function decodeF2P1(file, m) {
         buf[off + 3]) >>>
       0;
     off += 4;
-    entries.push({ name, size, nonceData: null });
+    entries.push({ name, size, nonceData: null, counter: null, bits: 0 });
   }
 
   let accOff = MS + off;

@@ -3,15 +3,17 @@
 // ═══════════════════════════════════════════════
 
 import { readBmpHeader, readPayload } from "./f2p-core.js";
-import { decodeF2P1 } from "./f2p1-decode.js";
-import { decodeF2P2 } from "./f2p2-decode.js";
-import { decodeF2P3 } from "./f2p3-decode.js";
-import { decodeF2P4 } from "./f2p4-decode.js";
+import { decodeF2P1 } from "./coders/f2p1-decode.js";
+import { decodeF2P2 } from "./coders/f2p2-decode.js";
+import { decodeF2P3 } from "./coders/f2p3-decode.js";
+import { decodeF2P4 } from "./coders/f2p4-decode.js";
+import { decodeF2P5 } from "./coders/f2p5-decode.js";
 
 const F2P1 = 0x46325031;
 const F2P2 = 0x46325032;
 const F2P3 = 0x46325033;
 const F2P4 = 0x46325034;
+const F2P5 = 0x46325035;
 
 // ── 快速检测 ──
 
@@ -26,6 +28,7 @@ export async function quickDetect(file) {
       [F2P2]: "F2P2",
       [F2P3]: "F2P3",
       [F2P4]: "F2P4",
+      [F2P5]: "F2P5",
     };
     if (names[marker]) return "BMP · " + m.bpp + "-bit · " + names[marker];
 
@@ -49,6 +52,7 @@ export async function decodeContainer(file, password) {
   // 先试 BGRA 原生（F2P4）
   let hdr = await readPayload(m, 0, 4);
   let marker = (hdr[0] << 24) | (hdr[1] << 16) | (hdr[2] << 8) | hdr[3];
+  if (marker === F2P5) return decodeF2P5(file, m, password);
   if (marker === F2P4) return decodeF2P4(file, m, password);
 
   // 再试旧通道映射

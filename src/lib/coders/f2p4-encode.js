@@ -2,7 +2,7 @@
 // F2P4 编码器（32-bit BMP，BGRA 原生顺序）
 // ═══════════════════════════════════════════════
 
-import { buildBMPStream, aesEncrypt } from "./f2p-core.js";
+import { buildBMPStream, aesEncrypt } from "../f2p-core.js";
 
 /**
  * 预计算 F2P4 BMP 尺寸
@@ -54,6 +54,7 @@ export async function writeF2P4Header(bmp, salt, encKey, files, fileNonces) {
     encKey,
     salt.subarray(0, 12),
     0,
+    32,
   );
   bmp.wChunk(magicEnc);
 
@@ -61,7 +62,7 @@ export async function writeF2P4Header(bmp, salt, encKey, files, fileNonces) {
     const nb = new TextEncoder().encode(files[i].name);
     const nd = fileNonces[i];
     const nn = crypto.getRandomValues(new Uint8Array(12));
-    const en = await aesEncrypt(nb, encKey, nn, 0);
+    const en = await aesEncrypt(nb, encKey, nn, 0, 32);
     bmp.w16(nb.length);
     bmp.wChunk(en);
     bmp.w64(files[i].size);

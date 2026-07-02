@@ -140,8 +140,8 @@ self.addEventListener("activate", (event) => {
 
 const jobs = new Map();
 const pendingStreams = new Map(); // jobId -> { push, close }
-const pendingDecodeStreams = new Map(); // jobId -> { bmpFile, key, offset, size, nonce, name }
-const pendingDecodeGroups = new Map(); // groupId -> { files: [{offset,size,nonce,name}], key, chunkSize }
+const pendingDecodeStreams = new Map(); // jobId -> { bmpFile, key, offset, size, counter(16B), bits, name }
+const pendingDecodeGroups = new Map(); // groupId -> { files: [{offset,size,counter,bits,name}], key, chunkSize }
 const fileRoutes = new Map(); // hash -> { id, idx }
 let jobIdCounter = 0;
 
@@ -291,7 +291,8 @@ function handleDecodeStreamPrepare(event, msg) {
     bmpFile,
     offset,
     size,
-    nonce,
+    counter,
+    bits,
     name,
     keyRaw,
     chunkSize = 64,
@@ -312,7 +313,8 @@ function handleDecodeStreamPrepare(event, msg) {
     bmpFile,
     offset,
     size,
-    nonce: nonce ? new Uint8Array(nonce) : null,
+    counter: counter ? new Uint8Array(counter) : null,
+    bits: bits || 0,
     name,
     chunkSize,
     keyPromise,
@@ -350,7 +352,8 @@ function handleDecodeGroup(event, msg) {
     bmpFile,
     files: files.map((f) => ({
       ...f,
-      nonce: f.nonce ? new Uint8Array(f.nonce) : null,
+      counter: f.counter ? new Uint8Array(f.counter) : null,
+      bits: f.bits || 0,
     })),
     keyPromise,
     chunkSize: chunkSize || 64,
@@ -501,12 +504,13 @@ async function serveDecodeStream(id) {
           data = await readPayload(bmp, pos, take);
           if (job.cancelled) break;
           let out = data;
-          if (decJob.key && decJob.nonce)
+          if (decJob.key && decJob.counter)
             out = await aesDecrypt(
               data,
               decJob.key,
-              decJob.nonce,
+              decJob.counter,
               (pos - decJob.offset) / 16,
+              decJob.bits,
             );
           if (job.cancelled) break;
           controller.enqueue(out);
@@ -600,12 +604,13 @@ async function serveGroupStream(id, idx, filename) {
           data = await readPayload(bmp, pos, take);
           if (job.cancelled) break;
           let out = data;
-          if (group.key && fi.nonce)
+          if (group.key && fi.counter)
             out = await aesDecrypt(
               data,
               group.key,
-              fi.nonce,
+              fi.counter,
               (pos - fi.offset) / 16,
+              fi.bits,
             );
           if (job.cancelled) break;
           controller.enqueue(out);
@@ -698,52 +703,54 @@ async function runEncode(event, msg, pushReadyPromise) {
       ds = 0; // magic(4) + fileCount(4) + salt(16) + iter(4) + encMagic(4)
     for (const f of files) {
       const nl = new TextEncoder().encode(f.name).length;
-      ms += 2 + nl + 8 + 12 + 12;
+      ms += 2 + nl + 8 + 16 + 16;
       ds += f.size;
     }
 
     const bmp = buildBMPStream(ms + ds, (row) => push(row));
     push(bmp.header);
 
-    bmp.w32(0x46325034); // F2P4
+    bmp.w32(0x46325035); // F2P5
     bmp.w32(files.length);
     bmp.wChunk(salt);
     bmp.w32(10000);
 
+    const zeroCtr = new Uint8Array(16);
     const magicEnc = await aesEncrypt(
-      new Uint8Array([0x46, 0x32, 0x50, 0x34]),
+      new Uint8Array([0x46, 0x32, 0x50, 0x35]),
       encKey,
-      salt.subarray(0, 12),
+      zeroCtr,
       0,
+      128,
     );
     bmp.wChunk(magicEnc);
 
-    const fileNonces = [];
+    const fileCtrs = [];
     for (const f of files) {
-      const nd = crypto.getRandomValues(new Uint8Array(12));
+      const dc = crypto.getRandomValues(new Uint8Array(16));
       const nb = new TextEncoder().encode(f.name);
-      const nn = crypto.getRandomValues(new Uint8Array(12));
-      const en = await aesEncrypt(nb, encKey, nn, 0);
+      const nc = crypto.getRandomValues(new Uint8Array(16));
+      const en = await aesEncrypt(nb, encKey, nc, 0, 128);
       bmp.w16(nb.length);
       bmp.wChunk(en);
       bmp.w64(f.size);
-      bmp.wChunk(nn);
-      bmp.wChunk(nd);
-      fileNonces.push(nd);
+      bmp.wChunk(nc);
+      bmp.wChunk(dc);
+      fileCtrs.push(dc);
     }
 
     const ck = chunkSize * 1024;
     let processed = 0;
     for (let i = 0; i < files.length; i++) {
       const f = files[i],
-        nd = fileNonces[i];
+        dc = fileCtrs[i];
       job.currentFile = f.name;
       let pos = 0;
       while (pos < f.size) {
         if (job.cancelled) throw Error("cancel");
         const end = Math.min(pos + ck, f.size);
         const buf = await readChunk(f, pos, end, ck);
-        const enc = await aesEncrypt(buf, encKey, nd, pos / 16);
+        const enc = await aesEncrypt(buf, encKey, dc, pos / 16, 128);
         bmp.wChunk(enc);
         pos = end;
         const done = processed + pos;

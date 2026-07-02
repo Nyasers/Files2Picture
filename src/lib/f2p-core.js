@@ -37,31 +37,35 @@ export async function deriveEncKey(password, salt, iterations, extractable) {
   );
 }
 
-function buildCtr(nonce, blockOff) {
+function buildCtr(counter, blockOff) {
   const ctr = new Uint8Array(16);
-  ctr.set(nonce, 0);
-  const v = blockOff >>> 0;
-  ctr[12] = (v >>> 24) & 0xff;
-  ctr[13] = (v >>> 16) & 0xff;
-  ctr[14] = (v >>> 8) & 0xff;
-  ctr[15] = v & 0xff;
+  ctr.set(counter, 0);
+  let val = 0n;
+  for (let i = 0; i < 16; i++) {
+    val = (val << 8n) | BigInt(ctr[i]);
+  }
+  val += BigInt(Math.trunc(blockOff));
+  for (let i = 15; i >= 0; i--) {
+    ctr[i] = Number(val & 0xffn);
+    val >>= 8n;
+  }
   return ctr;
 }
 
-export async function aesEncrypt(plain, key, nonce, blockOff) {
+export async function aesEncrypt(plain, key, counter, blockOff, bits) {
   return new Uint8Array(
     await crypto.subtle.encrypt(
-      { name: "AES-CTR", counter: buildCtr(nonce, blockOff), length: 32 },
+      { name: "AES-CTR", counter: buildCtr(counter, blockOff), length: bits },
       key,
       plain,
     ),
   );
 }
 
-export async function aesDecrypt(data, key, nonce, blockOff) {
+export async function aesDecrypt(data, key, counter, blockOff, bits) {
   return new Uint8Array(
     await crypto.subtle.decrypt(
-      { name: "AES-CTR", counter: buildCtr(nonce, blockOff), length: 32 },
+      { name: "AES-CTR", counter: buildCtr(counter, blockOff), length: bits },
       key,
       data,
     ),
