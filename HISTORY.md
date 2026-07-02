@@ -1,5 +1,15 @@
 # 更新日志
 
+## 2026-07-02
+
+### 修复：尾巴数据错序导致的 hash 不一致
+
+**问题**：文件编码后编解码 hash 不一致，分块越大越明显。
+
+**根因**：`sw.js` 中 `bmp.pad()` 重构（3ca5f79）将尾巴从 `wChunk` 内联写入改为返回独立 `tailBuf`，调用者在 `runEncode` 末尾同步 `push(tail)`。但像素行通过 `writeChain` Promise 链异步推送（`flushRow` 做 `writeChain.then(() => onRow(copy))`），同步 `push(tail)` 先于微任务中的行回调入队，导致 BMP 字节顺序错乱：尾巴数据出现在像素行之前。解码器从偏移 54 读到的是尾巴数据而非文件内容。
+
+**修复**：将 `push(tail)` 移至 `await bmp.flushAll()` 之后，确保所有像素行入队完成后再推尾巴。
+
 ## 2026-07-01
 
 ### Service Worker 指示灯
