@@ -114,6 +114,9 @@ h1 small {
 .sw-status.orange .sw-name {
   color: #ffa726;
 }
+.sw-status.orange {
+  cursor: pointer;
+}
 .sw-status.purple .sw-label,
 .sw-status.purple .sw-name {
   color: #ce93d8;

@@ -79,6 +79,16 @@ export function onControllerChange(cb) {
 navigator.serviceWorker.addEventListener("message", (event) => {
   const msg = event.data;
   if (!msg || !msg.type) return;
+  if (msg.type === "sw-updated") {
+    setStatus("orange", "🔄 点击刷新");
+    const st = resolveStatus();
+    const parent = st && st.parentElement;
+    if (parent) {
+      parent.style.cursor = "pointer";
+      parent.onclick = () => location.reload();
+    }
+    return;
+  }
   const handlers = handlerMap.get(msg.type);
   if (handlers) handlers.forEach((h) => h(msg));
 });

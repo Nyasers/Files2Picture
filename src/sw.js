@@ -21,6 +21,18 @@ import { precomputeBmp, writeF2P5Header } from "./lib/f2p-encode.js";
 const CACHE_NAME = "f2p-v1";
 const ASSET_TTL = 3600000;
 
+// ── 工具 ──
+
+function assetUrlSet(url) {
+  if (!url || typeof url !== "string") return new Set();
+  const set = new Set();
+  // <script src="..."> 和 <link href="...">
+  const srcRe = /<(?:script[^>]*src|link[^>]*href)="([^"]+)"/g;
+  let m;
+  while ((m = srcRe.exec(url))) set.add(m[1]);
+  return set;
+}
+
 // 内存时间戳，SW 重启后清空 → 下次访问后台刷新
 const cacheTimestamps = new Map();
 
@@ -122,13 +134,58 @@ async function serveIndexFallback(request, event) {
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) =>
+      // ① 拉新 index，读 body 但不缓存——先提取新 hash 的资源 URL
+      Promise.allSettled(
+        ["/"].map((url) =>
+          fetch(url)
+            .then((res) => (res.ok ? res.text() : null))
+            .then((html) => {
+              if (!html) return;
+              const urls = [...assetUrlSet(html)];
+              // ② 新 JS/CSS 先全部入缓存
+              return Promise.allSettled(
+                urls.map((u) =>
+                  fetch(u)
+                    .then((r) => {
+                      if (isCacheableResponse(r)) return cache.put(u, r);
+                    })
+                    .catch(() => {}),
+                ),
+              ).then(() => {
+                // ③ 资源就绪，再把新 index 写入缓存
+                //    重新 fetch 因为 body 已被消费
+                return fetch(url).then((r) => {
+                  if (isCacheableResponse(r)) return cache.put(url, r);
+                });
+              });
+            })
+            .catch(() => {}),
+        ),
+      )
+        // ④ 重验证旧缓存条目（旧 hash fetch 失败就丢弃）
+        .then(() =>
+          cache.keys().then((requests) =>
+            Promise.allSettled(
+              requests.map((req) =>
+                fetch(req)
+                  .then((res) => {
+                    if (isCacheableResponse(res)) return cache.put(req, res);
+                  })
+                  .catch(() => cache.delete(req)),
+              ),
+            ),
+          ),
+        ),
+    ),
+  );
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     Promise.all([
       self.clients.claim(),
-      // 清理旧版本缓存
       caches
         .keys()
         .then((keys) =>
@@ -136,7 +193,12 @@ self.addEventListener("activate", (event) => {
             keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)),
           ),
         ),
-    ]),
+    ]).then(() => {
+      // 通知所有页面：新 SW 已激活，缓存已刷新
+      self.clients.matchAll().then((cs) => {
+        for (const c of cs) c.postMessage({ type: "sw-updated" });
+      });
+    }),
   );
 });
 
