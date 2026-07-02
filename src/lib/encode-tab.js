@@ -7,6 +7,7 @@ import { fmt } from "./f2p-core.js";
 import { precomputeBmp } from "./f2p-encode.js";
 import { $, toast, sendToSW, waitForSw, triggerDownload } from "./sw-client.js";
 import { switchTab } from "./ui-shell.js";
+import { loadTemplate } from "./template.js";
 
 // ── 编码状态 ──
 
@@ -62,18 +63,14 @@ function updUI() {
   const t = sel.reduce((s, f) => s + f.size, 0);
 
   // 用模板构建文件列表
-  const container = document
-    .getElementById("enc-file-container")
-    .content.cloneNode(true);
+  const container = loadTemplate("enc-file-container");
   container.querySelector(".enc-file-summary").textContent =
     "共 " + sel.length + " 个文件 · " + fmt(t);
 
   const bodyEl = container.querySelector(".enc-file-body");
   for (let i = 0; i < sel.length; i++) {
     const n = sel[i];
-    const item = document
-      .getElementById("enc-file-item")
-      .content.cloneNode(true);
+    const item = loadTemplate("enc-file-item");
     const div = item.querySelector(".file-item");
     div.dataset.idx = i;
     item.querySelector(".idx").textContent = i;

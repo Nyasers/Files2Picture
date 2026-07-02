@@ -18,7 +18,7 @@ module.exports = [
     target: "web",
     output: {
       path: distDir,
-      filename: isDev ? "assets/main.js" : "assets/main.[contenthash:8].js",
+      filename: "main.js",
       clean: true,
     },
     devServer: {
@@ -42,15 +42,12 @@ module.exports = [
         inject: true,
       }),
       new rspack.CssExtractRspackPlugin({
-        filename: isDev
-          ? "assets/style.css"
-          : "assets/style.[contenthash:8].css",
+        filename: "style.css",
       }),
       new rspack.CopyRspackPlugin({
         patterns: [
           {
             from: path.resolve(__dirname, "src/assets"),
-            to: "assets",
           },
         ],
       }),

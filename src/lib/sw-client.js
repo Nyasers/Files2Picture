@@ -80,13 +80,20 @@ navigator.serviceWorker.addEventListener("message", (event) => {
   const msg = event.data;
   if (!msg || !msg.type) return;
   if (msg.type === "sw-updated") {
-    setStatus("orange", "🔄 点击刷新");
+    setStatus("orange", "🔄 自动刷新");
     const st = resolveStatus();
     const parent = st && st.parentElement;
     if (parent) {
       parent.style.cursor = "pointer";
-      parent.onclick = () => location.reload();
+      parent.onclick = function () {
+        clearTimeout(reloadTimer);
+        location.reload();
+      };
     }
+    // 5s 后自动刷新，点击可取消
+    var reloadTimer = setTimeout(function () {
+      location.reload();
+    }, 5000);
     return;
   }
   const handlers = handlerMap.get(msg.type);

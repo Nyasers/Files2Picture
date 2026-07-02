@@ -6,6 +6,7 @@
 import { fmt } from "./f2p-core.js";
 import { quickDetect, decodeContainer } from "./f2p-decode.js";
 import { $, toast, sendToSW, waitForSw, triggerDownload } from "./sw-client.js";
+import { loadTemplate } from "./template.js";
 
 // ── 解码状态 ──
 
@@ -139,9 +140,7 @@ function renderDecFiles(ent) {
   const totalSize = ent.reduce((s, f) => s + f.size, 0);
 
   // 用模板构建文件列表
-  const container = document
-    .getElementById("dec-file-container")
-    .content.cloneNode(true);
+  const container = loadTemplate("dec-file-container");
   container.querySelector(".dec-file-summary").textContent =
     "共 " + ent.length + " 个 · " + fmt(totalSize);
   container.querySelector(".dec-selected-count").textContent =
@@ -150,9 +149,7 @@ function renderDecFiles(ent) {
   const body = container.querySelector(".dec-file-body");
   for (let i = 0; i < ent.length; i++) {
     const f = ent[i];
-    const item = document
-      .getElementById("dec-file-item")
-      .content.cloneNode(true);
+    const item = loadTemplate("dec-file-item");
     item.querySelector(".dec-file-cb").dataset.idx = i;
     item.querySelector(".name").textContent = "📄 " + f.name;
     item.querySelector(".size").textContent = fmt(f.size);

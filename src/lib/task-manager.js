@@ -11,6 +11,7 @@ import {
   onSWReady,
   onControllerChange,
 } from "./sw-client.js";
+import { loadTemplate } from "./template.js";
 
 // ── Job 状态存储 ──
 
@@ -19,9 +20,8 @@ const taskHistory = []; // 保留最近 50 条历史
 const tasksList = $("tasksList");
 
 function renderEmpty() {
-  const tmpl = document.getElementById("tasks-empty").content.cloneNode(true);
   tasksList.innerHTML = "";
-  tasksList.appendChild(tmpl);
+  tasksList.appendChild(loadTemplate("tasks-empty"));
 }
 
 export function refreshTasks() {
@@ -62,7 +62,7 @@ function renderTasks() {
   const frag = document.createDocumentFragment();
   for (const { jobId, job, isHistory } of items) {
     const pct = job.progress || 0;
-    const item = document.getElementById("task-item").content.cloneNode(true);
+    const item = loadTemplate("task-item");
     const div = item.querySelector(".task-item");
     div.dataset.jobId = jobId;
     item.querySelector(".task-kind").textContent =

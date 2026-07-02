@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1.0" />
     <title>F2P · Files to Picture</title>
-    <link rel="manifest" href="assets/manifest.json" />
-    <link rel="icon" href="assets/icon-32.png" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" href="icon-32.png" />
     <meta name="theme-color" content="#121212" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta
@@ -15,11 +15,167 @@
     <meta name="apple-mobile-web-app-title" content="F2P" />
   </head>
   <body>
-    <div class="c">
+    <!-- ═══ 模板仓库 ═══ -->
+    <templates hidden>
+      <template id="err-es">
+        <div
+          style="
+            color: #f55;
+            padding: 2rem;
+            text-align: center;
+            line-height: 1.6;
+          "
+        >
+          浏览器版本过低，请使用 Chrome 86+ / 现代浏览器
+        </div>
+      </template>
+      <template id="enc-file-container">
+        <div class="enc-file-header">
+          <span class="enc-file-summary"></span>
+        </div>
+        <div class="enc-sort-header">
+          <span>#</span>
+          <span>文件名</span>
+          <span>大小</span>
+          <span class="enc-btn-col"></span>
+        </div>
+        <div class="enc-file-body"></div>
+      </template>
+      <template id="enc-file-item">
+        <div class="file-item" draggable="true">
+          <span class="idx"></span>
+          <span class="name"></span>
+          <span class="size"></span>
+          <button class="file-remove">✕</button>
+        </div>
+      </template>
+      <template id="tasks-empty">
+        <div class="tasks-empty">暂无任务</div>
+      </template>
+      <template id="task-item">
+        <div class="task-item">
+          <div class="task-header">
+            <span class="task-kind"></span>
+            <span class="task-status">运行中…</span>
+          </div>
+          <div class="task-label"></div>
+          <div class="task-file"></div>
+          <div class="tbar-wrap">
+            <div class="tbar"></div>
+          </div>
+          <div class="task-pct"></div>
+        </div>
+      </template>
+      <template id="dec-file-container">
+        <div class="dec-file-header">
+          <label class="select-all-label">
+            <input type="checkbox" class="select-all-dec" checked /> 全选
+          </label>
+          <span class="dec-file-summary"></span>
+          <span class="dec-selected-count"></span>
+          <button class="btn-batch-dl">📥 下载选中</button>
+        </div>
+        <div class="dec-file-body"></div>
+      </template>
+      <template id="dec-file-item">
+        <div class="decode-file-item">
+          <input type="checkbox" class="dec-file-cb" checked />
+          <span class="name"></span>
+          <span class="size"></span>
+          <button class="dl-btn">⬇️</button>
+        </div>
+      </template>
+    </templates>
+
+    <!-- 少女祈祷中 -->
+    <div class="loading overlay" id="loadingOverlay">
+      <style>
+        .loading {
+          box-sizing: border-box;
+        }
+        .loading.overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: #121212;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          align-items: center;
+          z-index: 2147483647;
+          font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+        }
+        .loading.spin {
+          width: 48px;
+          height: 48px;
+          border: 4px solid #2a2a2a;
+          border-top: 4px solid #4a4aff;
+          border-radius: 50%;
+          animation: pray-spin 1s linear infinite;
+          margin-bottom: 24px;
+        }
+        .loading.text {
+          color: #b0b0b0;
+          font-size: 15px;
+          font-weight: 400;
+          text-align: center;
+          letter-spacing: 0.03em;
+        }
+        @keyframes pray-spin {
+          0% {
+            transform: rotate(0deg);
+          }
+          100% {
+            transform: rotate(360deg);
+          }
+        }
+      </style>
+      <div class="loading spin"></div>
+      <div class="loading text">少女祈祷中...</div>
+      <!--[if IE]>
+        <pre>🪦 Internet Explorer 🪦</pre>
+      <![endif]-->
+      <noscript>
+        <pre style="color: #f55; margin-top: 1rem">需要 JavaScript 支持</pre>
+      </noscript>
+      <script>
+        /* 浏览器兼容性检查：必需 ??= / ?. / async / crypto.subtle */
+        (function () {
+          try {
+            if (typeof crypto?.subtle?.encrypt !== "function") throw 0;
+            new Function("async function f(){var a;return a??=1}")();
+            if (!Element.prototype.replaceChildren) throw 0;
+          } catch (_) {
+            var err = document.getElementById("err-es").content.cloneNode(true);
+            document.getElementById("loadingOverlay").replaceChildren(err);
+            throw Error("browser too old");
+          }
+        })();
+
+        /* 用后即焚 — 加载完成淡出 */
+        window.deloading = function (transition) {
+          delete window.deloading;
+          var overlay = document.getElementById("loadingOverlay");
+          overlay.ontransitionend = function () {
+            overlay.remove();
+          };
+          overlay.style.transition = transition || "opacity 0.8s ease-in";
+          overlay.style.opacity = "0";
+          var main = document.querySelector("main");
+          if (main) main.removeAttribute("hidden");
+        };
+      </script>
+    </div>
+
+    <!-- ═══ 全局 Toast（独立于 hidden main，首次访问仍可见） ═══ -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- ═══ 应用主体（初始 hidden，由 deloading 解除） ═══ -->
+    <main hidden>
       <h1>📦 F2P <small>Files to Picture</small></h1>
       <div class="sub">BMP 直写直读，文件隐写不压缩。</div>
-
-      <div class="toast-container" id="toastContainer"></div>
 
       <div class="top-bar">
         <div class="mode-tabs">
@@ -109,76 +265,6 @@
           <span class="sw-label" id="swLabel"></span>
         </span>
       </div>
-    </div>
-
-    <!-- ═══ 模板 ═══ -->
-
-    <!-- 编码文件列表容器 -->
-    <template id="enc-file-container">
-      <div class="enc-file-header">
-        <span class="enc-file-summary"></span>
-      </div>
-      <div class="enc-sort-header">
-        <span>#</span>
-        <span>文件名</span>
-        <span>大小</span>
-        <span class="enc-btn-col"></span>
-      </div>
-      <div class="enc-file-body"></div>
-    </template>
-
-    <!-- 编码文件项 -->
-    <template id="enc-file-item">
-      <div class="file-item" draggable="true">
-        <span class="idx"></span>
-        <span class="name"></span>
-        <span class="size"></span>
-        <button class="file-remove">✕</button>
-      </div>
-    </template>
-
-    <!-- 任务列表空状态 -->
-    <template id="tasks-empty">
-      <div class="tasks-empty">暂无任务</div>
-    </template>
-
-    <!-- 任务项 -->
-    <template id="task-item">
-      <div class="task-item">
-        <div class="task-header">
-          <span class="task-kind"></span>
-          <span class="task-status">运行中…</span>
-        </div>
-        <div class="task-label"></div>
-        <div class="task-file"></div>
-        <div class="tbar-wrap">
-          <div class="tbar"></div>
-        </div>
-        <div class="task-pct"></div>
-      </div>
-    </template>
-
-    <!-- 解码文件列表容器 -->
-    <template id="dec-file-container">
-      <div class="dec-file-header">
-        <label class="select-all-label">
-          <input type="checkbox" class="select-all-dec" checked /> 全选
-        </label>
-        <span class="dec-file-summary"></span>
-        <span class="dec-selected-count"></span>
-        <button class="btn-batch-dl">📥 下载选中</button>
-      </div>
-      <div class="dec-file-body"></div>
-    </template>
-
-    <!-- 解码文件项 -->
-    <template id="dec-file-item">
-      <div class="decode-file-item">
-        <input type="checkbox" class="dec-file-cb" checked />
-        <span class="name"></span>
-        <span class="size"></span>
-        <button class="dl-btn">⬇️</button>
-      </div>
-    </template>
+    </main>
   </body>
 </html>

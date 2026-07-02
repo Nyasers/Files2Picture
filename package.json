@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "build": "rspack build --config rspack.config.cjs",
-    "postbuild": "node scripts/minify-html.mjs",
+    "postbuild": "node scripts/minify-html.mjs && node scripts/generate-hashes.mjs",
     "dev": "set NODE_ENV=development && rspack dev --config rspack.config.cjs"
   },
   "devDependencies": {

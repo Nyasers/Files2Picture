@@ -14,88 +14,205 @@ import {
 } from "./lib/f2p-core.js";
 import { precomputeBmp, writeF2P5Header } from "./lib/f2p-encode.js";
 
-// ── PWA 缓存配置 ──
-//   每次刷新（/ 和 /index.html）→ 归一化 SWR
-//   /assets/ → SWR + 1hr TTL（session 内不重拉，重启后自动刷新）
+// ═══════════════════════════════════════════════
+// PWA 缓存配置 — hash-manifest 驱动，替代 TTL SWR
+//   - 构建时生成 hash-manifest.json（{ "/路径": "sha256" }）
+//   - SW 通过 IndexedDB 持久化 hash 表
+//   - 更新时只拉取 hash 变化的文件
+//   - 激活后清理孤立缓存
+// ═══════════════════════════════════════════════
 
 const CACHE_NAME = "f2p-v1";
-const ASSET_TTL = 3600000;
+const DB_NAME = "f2p-cache";
+const STORE_NAME = "hashes";
+const DB_VERSION = 1;
+const MANIFEST_URL = "/hashes.json";
 
-// ── 工具 ──
+// ── IndexedDB 工具 ──
 
-function assetUrlSet(url) {
-  if (!url || typeof url !== "string") return new Set();
-  const set = new Set();
-  // <script src="..."> 和 <link href="...">
-  const srcRe = /<(?:script[^>]*src|link[^>]*href)="([^"]+)"/g;
-  let m;
-  while ((m = srcRe.exec(url))) set.add(m[1]);
-  return set;
+async function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE_NAME))
+        db.createObjectStore(STORE_NAME, { keyPath: "key" });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
 }
 
-// 内存时间戳，SW 重启后清空 → 下次访问后台刷新
-const cacheTimestamps = new Map();
-
-function cacheTimestampSet(url) {
-  const u = new URL(url);
-  cacheTimestamps.set(CACHE_NAME + "::" + u.origin + u.pathname, Date.now());
+async function getAllHashes() {
+  const db = await openDB();
+  return new Promise((resolve) => {
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const req = tx.objectStore(STORE_NAME).getAll();
+    req.onsuccess = () =>
+      resolve(
+        req.result.reduce((acc, { key, hash }) => ((acc[key] = hash), acc), {}),
+      );
+    req.onerror = () => resolve({});
+  });
 }
 
-function isCachedFresh(url) {
-  const u = new URL(url);
-  const ts = cacheTimestamps.get(CACHE_NAME + "::" + u.origin + u.pathname);
-  return ts && Date.now() - ts < ASSET_TTL;
+async function bulkSetHashes(manifest) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+    store.clear();
+    Object.entries(manifest).forEach(([key, hash]) => store.put({ key, hash }));
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
 }
 
-function normalizedUrl(request) {
-  const u = new URL(request.url);
-  u.search = "";
-  u.hash = "";
-  return u.href;
+// ── workOnce: 相同 key 的并发请求合并 ──
+
+function workOnce(key, task) {
+  const inflight = (workOnce.p ??= new Map());
+  return (
+    inflight.get(key) ??
+    inflight
+      .set(
+        key,
+        Promise.resolve(task?.()).then(
+          (v) => (inflight.delete(key), v),
+          (e) => (inflight.delete(key), Promise.reject(e)),
+        ),
+      )
+      .get(key)
+  );
 }
 
-function isCacheableResponse(res) {
-  if (!res || !res.ok) return false;
-  const cc = res.headers.get("Cache-Control") || "";
-  // 跳过 no-store / private / no-cache
-  return !/\b(no-store|private|no-cache)\b/i.test(cc);
+// ── fetch 超时保护（AbortController）──
+
+const FETCH_TIMEOUT = 10000;
+
+function fetchWithTimeout(url, ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms || FETCH_TIMEOUT);
+  return fetch(url, { signal: controller.signal }).finally(() =>
+    clearTimeout(timer),
+  );
 }
+
+// ── Manifest 同步 ──
+
+async function syncManifest() {
+  return (syncManifest.promise ??= fetchWithTimeout(MANIFEST_URL)
+    .then((res) => res.json())
+    .then((raw) => {
+      // hashtable.json 的 key 不含前导 /，加上再往下传
+      const m = {};
+      for (const [key, hash] of Object.entries(raw)) m["/" + key] = hash;
+      return m;
+    })
+    .then((manifest) => syncUpdate(manifest).then(() => manifest))
+    .then((manifest) => cleanupOrphans().then(() => manifest))
+    .then(
+      (manifest) => (
+        setTimeout(() => delete syncManifest.promise, 6e4),
+        manifest
+      ),
+      (reason) => (delete syncManifest.promise, Promise.reject(reason)),
+    ));
+}
+
+async function syncUpdate(manifest) {
+  const oldHashes = await getAllHashes();
+  const updates = Object.entries(manifest).filter(
+    ([key, hash]) => oldHashes[key] !== hash,
+  );
+  if (updates.length === 0) return;
+  const results = await Promise.allSettled(
+    updates.map(([key]) =>
+      workOnce(key, async () => {
+        const cache = await caches.open(CACHE_NAME);
+        const res = await fetchWithTimeout(key);
+        if (res.ok) await cache.put(key, res.clone());
+        return res;
+      }),
+    ),
+  );
+
+  // 持久化：成功 → 新 hash，失败 → 保留旧 hash / 从未存在的则移除
+  const toPersist = { ...manifest };
+  for (let i = 0; i < updates.length; i++) {
+    const [key] = updates[i];
+    if (results[i].status === "rejected") {
+      if (oldHashes[key] !== undefined) {
+        toPersist[key] = oldHashes[key]; // 已有旧版本，保留旧 hash → 下次激活重试
+      } else {
+        delete toPersist[key]; // 首次安装失败，从 hash 表移除 → 下次激活重新发现差异
+      }
+    }
+  }
+  await bulkSetHashes(toPersist);
+
+  const failed = results.filter((r) => r.status === "rejected");
+  if (failed.length > 0)
+    console.warn(
+      "syncUpdate: " + failed.length + "/" + updates.length + " files 失败",
+      failed.map((r) => r.reason?.message),
+    );
+  if (updates.length > failed.length)
+    self.clients
+      .matchAll()
+      .then((clients) =>
+        clients.forEach((client) => client.postMessage({ type: "sw-updated" })),
+      );
+}
+
+async function cleanupOrphans() {
+  const manifest = await getAllHashes();
+  // 防误判：manifest 为空或条目极少时可能是 IDB 事务异常（clear 后 abort）
+  // 此时跳过清理，避免删光整个缓存
+  if (Object.keys(manifest).length < 3) {
+    console.warn(
+      "cleanupOrphans: manifest 条目过少(" +
+        Object.keys(manifest).length +
+        ")，跳过本次清理",
+    );
+    return;
+  }
+  const validPaths = new Set(Object.keys(manifest));
+  // / 和 /index.html 互为别名，只认其中一个会导致另一个被误删
+  if (validPaths.has("/index.html")) validPaths.add("/");
+  if (validPaths.has("/")) validPaths.add("/index.html");
+  const cache = await caches.open(CACHE_NAME);
+  const requests = await cache.keys();
+  return Promise.all(
+    requests
+      .filter((req) => {
+        const pn = new URL(req.url).pathname;
+        // 保留流式下载相关的缓存（/file/ 路径）
+        return !validPaths.has(pn) && !pn.startsWith("/file/");
+      })
+      .map((req) => cache.delete(req)),
+  );
+}
+
+// ── 路径匹配 ──
 
 function isStreamingRoute(pn) {
   return pn === "/files" || pn.startsWith("/file/");
 }
 
-function isIndexRoute(pn) {
-  return pn === "/" || pn === "/index.html";
+function isManifestRoute(pn) {
+  return pn === MANIFEST_URL;
 }
 
-function isStaticAsset(pn) {
-  return pn.startsWith("/assets/");
-}
+// ── 缓存服务 ──
 
-async function staleWhileRevalidate(request, event) {
+async function serveFromCache(request, event) {
   const cache = await caches.open(CACHE_NAME);
-  const normUrl = normalizedUrl(request);
-  const cached = await cache.match(normUrl);
-  if (cached) {
-    if (isCachedFresh(request.url)) return cached;
-    const updatePromise = fetch(request)
-      .then((res) => {
-        if (isCacheableResponse(res))
-          return cache
-            .put(normUrl, res.clone())
-            .then(() => cacheTimestampSet(request.url));
-      })
-      .catch(() => {});
-    event.waitUntil(updatePromise);
-    return cached;
-  }
+  const cached = await cache.match(request);
+  if (cached) return cached;
   try {
     const res = await fetch(request);
-    if (isCacheableResponse(res)) {
-      const putPromise = cache.put(normUrl, res.clone());
-      event.waitUntil(putPromise.then(() => cacheTimestampSet(request.url)));
-    }
+    if (res.ok) event?.waitUntil(cache.put(request, res.clone()));
     return res;
   } catch {
     return new Response("Offline", {
@@ -105,100 +222,22 @@ async function staleWhileRevalidate(request, event) {
   }
 }
 
-async function serveIndexFallback(request, event) {
-  const url = new URL(request.url);
-  const indexUrl = new URL("/", url.origin).href;
-  const cache = await caches.open(CACHE_NAME);
-  const cached = await cache.match(indexUrl);
-  if (cached) {
-    const updatePromise = fetch(indexUrl)
-      .then((r) => isCacheableResponse(r) && cache.put(indexUrl, r.clone()))
-      .catch(() => {});
-    event.waitUntil(updatePromise);
-    return cached;
-  }
-  try {
-    const res = await fetch(indexUrl);
-    if (isCacheableResponse(res))
-      event.waitUntil(cache.put(indexUrl, res.clone()));
-    return res;
-  } catch {
-    return new Response("Offline", {
-      status: 503,
-      headers: { "Content-Type": "text/html" },
-    });
-  }
-}
+// ── 生命周期 ──
 
-// ── 原有任务执行 ──
-
-self.addEventListener("install", (event) => {
+self.addEventListener("install", () => {
   self.skipWaiting();
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) =>
-      // ① 拉新 index，读 body 但不缓存——先提取新 hash 的资源 URL
-      Promise.allSettled(
-        ["/"].map((url) =>
-          fetch(url)
-            .then((res) => {
-              if (!res.ok) return;
-              // clone 一份用于后续缓存，body 读文本提取资源 URL
-              const clone = res.clone();
-              return res.text().then((html) => {
-                const urls = [...assetUrlSet(html)];
-                // ② 新 JS/CSS 先全部入缓存
-                return Promise.allSettled(
-                  urls.map((u) =>
-                    fetch(u)
-                      .then((r) => {
-                        if (isCacheableResponse(r)) return cache.put(u, r);
-                      })
-                      .catch(() => {}),
-                  ),
-                ).then(() => {
-                  // ③ 资源就绪，写回缓存的 clone
-                  return cache.put(url, clone);
-                });
-              });
-            })
-            .catch(() => {}),
-        ),
-      )
-        // ④ 重验证旧缓存条目（旧 hash fetch 失败就丢弃）
-        .then(() =>
-          cache.keys().then((requests) =>
-            Promise.allSettled(
-              requests.map((req) =>
-                fetch(req)
-                  .then((res) => {
-                    if (isCacheableResponse(res)) return cache.put(req, res);
-                  })
-                  .catch(() => cache.delete(req)),
-              ),
-            ),
-          ),
-        ),
-    ),
-  );
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    Promise.all([
-      self.clients.claim(),
-      caches
-        .keys()
-        .then((keys) =>
-          Promise.all(
-            keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)),
-          ),
-        ),
-    ]).then(() => {
-      // 通知所有页面：新 SW 已激活，缓存已刷新
-      self.clients.matchAll().then((cs) => {
-        for (const c of cs) c.postMessage({ type: "sw-updated" });
-      });
-    }),
+    syncManifest()
+      .catch((e) => console.warn("syncManifest 失败（首次安装或离线）:", e))
+      .then(() => self.clients.claim())
+      .then(() =>
+        self.clients.matchAll().then((cs) => {
+          for (const c of cs) c.postMessage({ type: "sw-ready" });
+        }),
+      ),
   );
 });
 
@@ -331,20 +370,27 @@ self.addEventListener("fetch", async (event) => {
   }
 
   // ════════════════════════════════════════
-  // PWA 缓存：三级策略
+  // PWA 缓存：全量 cache-first
+  //   唯一例外：/hashes.json 走网络直通（小文件，必须新鲜）
   // ════════════════════════════════════════
 
   const pn = url.pathname;
   if (event.request.method === "GET" && !isStreamingRoute(pn)) {
-    if (isIndexRoute(pn)) {
-      // / 和 /index.html 归一化 SWR
-      event.respondWith(serveIndexFallback(event.request, event));
-    } else if (isStaticAsset(pn)) {
-      // /assets/ → SWR + 1hr TTL（session 内不重拉，重启后自动刷新）
-      event.respondWith(staleWhileRevalidate(event.request, event));
+    if (isManifestRoute(pn)) {
+      event.respondWith(
+        fetch(event.request).catch(
+          () =>
+            new Response("{}", {
+              status: 503,
+              headers: { "Content-Type": "application/json" },
+            }),
+        ),
+      );
+    } else {
+      event.respondWith(serveFromCache(event.request, event));
     }
   }
-  // 其余请求（外部资源等）走默认浏览器行为
+  // 其余请求走默认浏览器行为
 });
 
 // ── 解码流式准备（同步设 pending 条目，key 异步导入推迟到 fetch handler）──
