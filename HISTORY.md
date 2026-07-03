@@ -1,5 +1,68 @@
 # 更新日志
 
+## 2026-07-03
+
+### F2P6 分卷编码
+
+**F2P6 格式设计**
+
+- 数据级分卷：索引分卷 (segID=0) 含文件条目 + 部分数据，数据分卷 (segID>0) 只有数据
+- 索引分卷用 segSalt 加密全部内容，数据分卷各有独立 segSalt 通过 indexSalt 加密保护
+- `precomputeSegments` 根据目标 BMP 文件大小自动计算分卷数量和每卷数据量
+- 分卷间通过 `encMagic` 校验密码和同批归属
+- 文件条目与数据共享同一 AES-CTR 流（不独立加密文件名）
+
+**顺序编码协调器**
+
+- 所有分卷下载请求同时触发，SW 内逐个编码，降低内存峰值
+- `encodeSegmentsSequentially` 按 segID 顺序循环，每分卷完成后再 resolve 该分卷的 deferred stream
+- 无每分卷子任务，编码在任务管理器中显示为单个合并任务
+
+**流式解码 (F2P6)**
+
+- `serveF2P6DecodeStream` 通过 `/file/<hash>/<filename>` 拦截流式响应
+- `extractFileDataRange` 按 64KB 块提取指定文件的指定字节范围
+- 全局坐标映射：索引分卷数据部分 as segID=0 + 数据分卷按 segID 排序后赋予连续 globalStart/globalEnd
+- 支持分卷跨区读取（单个文件可跨越索引分卷和数据分卷）
+
+**块加密 (chunked AES-CTR)**
+
+- 数据分卷每 64KB chunk 独立加密，`blockOff = 1 + offset/16` 保持计数器连续
+- 支持进度上报和取消回调（`onProgress` / `isCancelled`）
+
+**魔数集中管理**
+
+- 所有版本魔数 `F2P1`–`F2P6` 移至 `f2p-core.js` 统一导出
+- 各编码器/解码器改为 import 常量，消除硬编码
+
+**解码状态重构**
+
+- 7 个全局变量 (`decFile`, `decEntries`, `decKey`, `decBmpMeta`, `decDataStart`, `decSel`, `dd`) → 单一 `decResult` 对象 + `decSel` 列表
+- `decResult = { type: "f2p6"|"legacy", entries, indexInfo, dataSegments }`
+- 文件选择支持多选，F2P6 自动在所有选中的 BMP 中找索引分卷和数据分卷
+
+**分卷大小选择器**
+
+- 编码区新增分卷大小下拉菜单（10MB–4GB）
+- 实时校验文件列表是否能在索引分卷中装下
+- 不设分卷时 (0) 全部数据装进索引分卷，保持向后兼容
+
+**修复：`extractFileDataRange` 偏移量错误**
+
+- `readStart` / `fileEnd` 未加 `entry.globalOffset`，流式解码所有文件从全局偏移 0 读
+- 导致所有提取文件都包含文件 0 开头的数据（按各自大小截断）
+- 非流式 `extractFileData` 不受影响（已正确使用 globalOffset）
+
+**其他改动**
+
+- 术语统一：分片/分包 → 分卷
+- `encode-tab.js` 新增 `rmF` 删除按钮
+- `localStorage` → `sessionStorage` 用于 tab 状态持久化
+- `main.js` 清理 SW 初始化流程
+- 移除 `/seg-dl` 路由，全部走统一 `/files?id=X&idx=Y`
+- F2P1-F2P5 编码器保留但不再从 `f2p-encode.js` 导出
+- F2P5 及更早版本解码路径未受影响
+
 ## 2026-07-02
 
 ### 密码输入框回归普通文本框

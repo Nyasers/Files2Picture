@@ -2,7 +2,7 @@
 // F2P4 编码器（32-bit BMP，BGRA 原生顺序）
 // ═══════════════════════════════════════════════
 
-import { buildBMPStream, aesEncrypt } from "../f2p-core.js";
+import { buildBMPStream, aesEncrypt, F2P4 } from "../f2p-core.js";
 
 /**
  * 预计算 F2P4 BMP 尺寸
@@ -43,7 +43,7 @@ export function createBmpWriter(layout, onRow) {
  * @param {boolean} nameEnc
  */
 export async function writeF2P4Header(bmp, salt, encKey, files, fileNonces) {
-  bmp.w32(0x46325034); // F2P4 magic
+  bmp.w32(F2P4); // F2P4 magic
   bmp.w32(files.length);
   bmp.wChunk(salt);
   bmp.w32(10000); // PBKDF2 迭代

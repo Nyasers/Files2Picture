@@ -30,7 +30,13 @@
 // ═══════════════════════════════════════════════
 "use strict";
 
-import { buildBMPStream, aesEncrypt } from "../f2p-core.js";
+import {
+  buildBMPStream,
+  aesEncrypt,
+  deriveEncKey,
+  aesDecrypt,
+  F2P5,
+} from "../f2p-core.js";
 
 /**
  * 预计算 F2P5 BMP 尺寸
@@ -70,7 +76,7 @@ export function createBmpWriter(layout, onRow) {
  * @param {{name:Uint8Array, data:Uint8Array}[]} fileCounters - 每文件 16B + 16B
  */
 export async function writeF2P5Header(bmp, salt, encKey, files, fileCounters) {
-  bmp.w32(0x46325035); // F2P5 magic
+  bmp.w32(F2P5); // F2P5 magic
   bmp.w32(files.length);
   bmp.wChunk(salt);
   bmp.w32(10000); // PBKDF2 迭代

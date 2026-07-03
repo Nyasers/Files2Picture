@@ -204,6 +204,43 @@ h1 small {
 .chunk-select select:hover {
   border-color: #555;
 }
+.bmp-size-select {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.bmp-size-select label {
+  margin: 0 0 0 12px;
+  font-size: 0.78rem;
+  color: #888;
+  white-space: nowrap;
+}
+.bmp-size-select select {
+  background: #2a2a2a;
+  color: #ccc;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.bmp-size-select select:hover {
+  border-color: #555;
+}
+.bmp-size-select .bmp-size-hint {
+  font-size: 0.72rem;
+  color: #888;
+  margin-left: 4px;
+  white-space: nowrap;
+}
+.bmp-size-select .bmp-size-hint.warn {
+  color: #f90;
+}
+.bmp-size-unit {
+  font-size: 0.72rem;
+  color: #666;
+  margin-left: 2px;
+}
 .mem-hint {
   font-size: 1rem;
   color: #4a4a4a;

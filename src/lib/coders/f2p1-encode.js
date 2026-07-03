@@ -2,7 +2,7 @@
 // F2P1 编码器（无加密，24-bit，通道映射 [2,1,0]）
 // ═══════════════════════════════════════════════
 
-import { buildBMPStream } from "../f2p-core.js";
+import { buildBMPStream, F2P1 } from "../f2p-core.js";
 
 /**
  * 预计算 F2P1 BMP 尺寸
@@ -31,7 +31,7 @@ export function createBmpWriter(layout, onRow) {
  * 写入 F2P1 元数据头（无加密）
  */
 export async function writeF2P1Header(bmp, files) {
-  bmp.w32(0x46325031); // F2P1 magic
+  bmp.w32(F2P1); // F2P1 magic
   bmp.w32(files.length);
 
   for (const f of files) {

@@ -1,10 +1,18 @@
 // ═══════════════════════════════════════════════
-// F2P 编码入口 — 调用最新版本编码器（F2P5）
+// F2P 编码入口 — 各版本编码器统一导出
 // ═══════════════════════════════════════════════
 "use strict";
 
+// F2P6
 export {
-  precomputeBmp,
-  createBmpWriter,
-  writeF2P5Header,
-} from "./coders/f2p5-encode.js";
+  precomputeSegments,
+  writeIndexPayload,
+  writeDataPayload,
+  encodeIndexSegment,
+  encodeDataSegment,
+  readFileDataRange,
+  buildFileEntriesFromFiles,
+  payloadForTarget,
+  INDEX_HEADER_SIZE,
+  DATA_HEADER_SIZE,
+} from "./coders/f2p6-encode.js";

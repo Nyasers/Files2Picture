@@ -152,22 +152,23 @@
         })();
 
         /* 用后即焚 — 加载完成淡出 */
-        window.deloading = function (transition) {
+        window.deloading = function () {
           delete window.deloading;
           var overlay = document.getElementById("loadingOverlay");
           overlay.ontransitionend = function () {
             overlay.remove();
           };
-          overlay.style.transition = transition || "opacity 0.8s ease-in";
-          overlay.style.opacity = "0";
+          overlay.style.transition = "opacity 0.721s ease-in";
           var main = document.querySelector("main");
           if (main) main.removeAttribute("hidden");
+          // eslint-disable-next-line
+          void overlay.offsetHeight;
+          overlay.style.opacity = "0";
         };
 
         /* 兜底：10s 后如果 main.js 还没调 deloading，自动退出 */
         setTimeout(function () {
-          if (typeof window.deloading === "function")
-            window.deloading("opacity 1.2s ease-in");
+          if (typeof window.deloading === "function") window.deloading();
         }, 1e4);
       </script>
     </div>
@@ -215,6 +216,22 @@
             />
           </div>
           <div class="btn-group">
+            <div class="bmp-size-select">
+              <label>分卷</label>
+              <select id="targetBmpSize">
+                <option value="0"></option>
+                <option value="10">10 MB</option>
+                <option value="25">25 MB</option>
+                <option value="30">30 MB</option>
+                <option value="100">100 MB</option>
+                <option value="512">512 MB</option>
+                <option value="1000">1000 MB</option>
+                <option value="1024">1024 MB</option>
+                <option value="4092">4092 MB</option>
+              </select>
+              <!-- <span class="bmp-size-unit">MB</span> -->
+              <span id="bmpSizeHint" class="bmp-size-hint"></span>
+            </div>
             <button class="btn" id="encBtn" disabled>🎨 生成</button>
             <button class="btn-ghost" id="clearBtn">✕ 清空</button>
           </div>
@@ -227,7 +244,7 @@
         <div class="card">
           <label>📤 选择图片</label>
           <div class="drop-zone" id="decDrop">
-            <input type="file" id="decInput" />
+            <input type="file" id="decInput" multiple />
             <div class="icon">🖼️</div>
             <div class="text" id="decText">拖放图片，或点击选择</div>
             <div class="hint" id="decHint">通过文件头自动识别</div>

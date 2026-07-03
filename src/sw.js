@@ -7,12 +7,17 @@ import {
   deriveEncKey,
   aesEncrypt,
   aesDecrypt,
-  readChunk,
   buildBMPStream,
   readBmpHeader,
   readPayload,
 } from "./lib/f2p-core.js";
-import { precomputeBmp, writeF2P5Header } from "./lib/f2p-encode.js";
+import {
+  precomputeSegments,
+  encodeIndexSegment,
+  encodeDataSegment,
+  buildFileEntriesFromFiles,
+} from "./lib/f2p-encode.js";
+import { extractFileDataRange } from "./lib/coders/f2p6-decode.js";
 
 // ═══════════════════════════════════════════════
 // PWA 缓存配置 — hash-manifest 驱动，替代 TTL SWR
@@ -276,7 +281,9 @@ const jobs = new Map();
 const pendingStreams = new Map(); // jobId -> { push, close }
 const pendingDecodeStreams = new Map(); // jobId -> { bmpFile, key, offset, size, counter(16B), bits, name }
 const pendingDecodeGroups = new Map(); // groupId -> { files: [{offset,size,counter,bits,name}], key, chunkSize }
-const fileRoutes = new Map(); // hash -> { id, idx }
+const pendingEncodeGroups = new Map(); // id -> { jobId, segCount, segments: [{segID, segInfo}] }
+const pendingF2P6DecodeGroups = new Map(); // id -> { key, entries, blobs: [bmpMeta], segments }
+const fileRoutes = new Map(); // hash -> { id, idx, kind }
 let jobIdCounter = 0;
 
 // ── 消息处理 ──
@@ -287,25 +294,7 @@ self.addEventListener("message", (event) => {
   if (msg.type === "ping") return;
   switch (msg.type) {
     case "encode": {
-      // 同步设 pendingStreams，让 /dl 拦截能找到
-      let pushReady;
-      const pushReadyPromise = new Promise((r) => {
-        pushReady = r;
-      });
-      pendingStreams.set(msg.jobId, {
-        push: null,
-        close: null,
-        size: msg.totalSize,
-        name: msg.filename,
-        pushReady,
-      });
-      if (event.source)
-        event.source.postMessage({
-          type: "encode-stream-ready",
-          jobId: msg.jobId,
-          name: msg.filename,
-        });
-      event.waitUntil(runEncode(event, msg, pushReadyPromise));
+      event.waitUntil(runEncode(event, msg));
       break;
     }
     case "cancel":
@@ -322,6 +311,9 @@ self.addEventListener("message", (event) => {
       break;
     case "decode-group":
       handleDecodeGroup(event, msg);
+      break;
+    case "f2p6-decode-group":
+      handleF2P6DecodePrepare(event, msg);
       break;
   }
 });
@@ -346,7 +338,7 @@ self.addEventListener("fetch", async (event) => {
   }
 
   // ════════════════════════════════════════
-  // 原有流式下载逻辑（保持不变）
+  // 原有流式下载逻辑
   // ════════════════════════════════════════
 
   // ── 触发：/files?id=<id>[&idx=<n>] → 302 → /file/<hash>/<filename> ──
@@ -377,13 +369,43 @@ self.addEventListener("fetch", async (event) => {
           );
         }
 
-        // 分组
-        const group = pendingDecodeGroups.get(id);
-        if (!group) return new Response("未找到分组", { status: 404 });
+        // 分组 — 解码组、编码分卷或 F2P6 解码分卷
+        const decGroup = pendingDecodeGroups.get(id);
+        const encGroup = pendingEncodeGroups.get(id);
+        const f2p6Group = pendingF2P6DecodeGroups.get(id);
+        if (!decGroup && !encGroup && !f2p6Group)
+          return new Response("未找到分组", { status: 404 });
         const i = parseInt(idx);
-        if (isNaN(i) || !group.files[i])
+
+        if (f2p6Group) {
+          if (isNaN(i) || i >= f2p6Group.entries.length)
+            return new Response("索引无效", { status: 400 });
+          const fileName = f2p6Group.entries[i].name || "file.bin";
+          const hash = await computeFileHash(id, i);
+          fileRoutes.set(hash, { id, idx: i, kind: "f2p6-decode" });
+          return Response.redirect(
+            "/file/" + hash + "/" + encodeURIComponent(fileName),
+            302,
+          );
+        }
+
+        if (encGroup) {
+          if (isNaN(i) || i >= encGroup.segCount)
+            return new Response("索引无效", { status: 400 });
+          const shortId = (+id || Date.now()).toString(36);
+          const fileName =
+            "F2P." + shortId + "." + i.toString(16).padStart(8, "0") + ".bmp";
+          const hash = await computeFileHash(id, i);
+          fileRoutes.set(hash, { id, idx: i, kind: "encode" });
+          return Response.redirect(
+            "/file/" + hash + "/" + encodeURIComponent(fileName),
+            302,
+          );
+        }
+
+        if (isNaN(i) || !decGroup.files[i])
           return new Response("索引无效", { status: 400 });
-        const fileName = group.files[i].name || "file.bin";
+        const fileName = decGroup.files[i].name || "file.bin";
         const hash = await computeFileHash(id, i);
         fileRoutes.set(hash, { id, idx: i });
         return Response.redirect(
@@ -406,6 +428,10 @@ self.addEventListener("fetch", async (event) => {
         if (!route) return new Response("未找到任务", { status: 404 });
         fileRoutes.delete(hash);
 
+        if (route.idx !== undefined && route.kind === "encode")
+          return serveEncodeSegmentStream(route.id, route.idx);
+        if (route.idx !== undefined && route.kind === "f2p6-decode")
+          return serveF2P6DecodeStream(route.id, route.idx);
         if (route.idx !== undefined)
           return serveGroupStream(route.id, route.idx);
         return serveStream(route.id);
@@ -813,128 +839,483 @@ async function serveGroupStream(id, idx, filename) {
   return new Response(stream, { headers });
 }
 
-// ── 编码 ──
+// ── F2P6 解码准备 ──
 
-async function runEncode(event, msg, pushReadyPromise) {
-  const { files, password, chunkSize = 64, jobId } = msg;
-  if (!jobId) return;
-  const job = {
-    kind: "encode",
-    status: "running",
-    progress: 0,
-    cancelled: false,
-    fileNames: files.map((f) => f.name),
-    totalFiles: files.length,
-    currentFile: "",
-    label: files.length + " 个文件编码中…",
-    filename: msg.filename || "F2P_export.bmp",
-  };
-  jobs.set(jobId, job);
-  postToClients({ type: "job-new", jobId, ...job });
-
-  const pc = pendingStreams.get(jobId);
-  if (!pc) {
-    pendingStreams.delete(jobId);
-    postToClients({ type: "job-error", jobId, error: "下载流不可用" });
+function handleF2P6DecodePrepare(event, msg) {
+  const {
+    id,
+    entries,
+    keyRaw,
+    indexBlob,
+    indexSegSalt,
+    dataInIndex,
+    indexDataPayloadOffset,
+    dataSegments,
+    chunkSize,
+  } = msg;
+  if (!id || !entries || !keyRaw || !indexBlob || !dataSegments) {
+    if (event.source)
+      event.source.postMessage({
+        type: "f2p6-decode-error",
+        id,
+        error: "参数不足",
+      });
     return;
   }
-  // 等 ReadableStream 的 start 回调设 push
-  await Promise.race([
-    pushReadyPromise,
-    new Promise((resolve) => setTimeout(resolve, 1e4)),
-  ]);
-  if (!pc.push) {
-    pendingStreams.delete(jobId);
-    postToClients({ type: "job-error", jobId, error: "下载流超时" });
+
+  pendingF2P6DecodeGroups.set(id, {
+    entries,
+    keyRaw: new Uint8Array(keyRaw),
+    indexBlob,
+    indexSegSalt: new Uint8Array(indexSegSalt),
+    dataInIndex,
+    indexDataPayloadOffset,
+    dataSegments,
+    chunkSize,
+    dispatched: 0,
+  });
+
+  if (event.source) event.source.postMessage({ type: "f2p6-decode-ready", id });
+}
+
+// ═══════════════════════════════════════════════
+// F2P6 编码处理
+// ═══════════════════════════════════════════════
+
+/**
+ * 处理 F2P6 编码请求
+ */
+async function runEncode(event, msg) {
+  const { files, password, targetBmpSize, chunkSize, jobId } = msg;
+  if (!files || !files.length) {
+    if (event.source)
+      event.source.postMessage({
+        type: "encode-error",
+        jobId,
+        error: "无文件",
+      });
     return;
   }
-  const push = pc.push,
-    closeStream = pc.close;
-  pendingStreams.delete(jobId);
 
   try {
-    postToClients({ type: "job-start", jobId });
-    const salt = crypto.getRandomValues(new Uint8Array(16));
-    const encKey = await deriveEncKey(password, salt, 10000);
-
-    // 使用 F2P5 编码器模块计算布局（统一尺寸计算路径）
-    const layout = precomputeBmp(
+    const segInfo = precomputeSegments(
       files.map((f) => ({ name: f.name, size: f.size })),
+      targetBmpSize,
     );
-    const bmp = buildBMPStream(layout.ms + layout.ds, (row) => push(row));
-    push(bmp.header);
 
-    // 生成每文件的 name/data counter
-    const fileCounters = files.map(() => ({
-      name: crypto.getRandomValues(new Uint8Array(16)),
-      data: crypto.getRandomValues(new Uint8Array(16)),
-    }));
+    const segSalt = crypto.getRandomValues(new Uint8Array(16));
+    const iter = 10000;
+    const encKey = await deriveEncKey(password, segSalt, iter);
+    const indexSalt = crypto.getRandomValues(new Uint8Array(16));
 
-    // 通过编码器统一入口写元数据头
-    await writeF2P5Header(bmp, salt, encKey, files, fileCounters);
-    const fileCtrs = fileCounters.map((fc) => fc.data);
+    // 预计算 encMagic 和 fileEntries，供 encodeIndexSegment 复用
+    const emFull = await aesEncrypt(
+      new Uint8Array([0x46, 0x32, 0x50, 0x36]),
+      encKey,
+      segSalt,
+      0,
+      128,
+    );
+    const encMagic = emFull.subarray(0, 4);
+    const fileEntries = buildFileEntriesFromFiles(files, segInfo.nameBufs);
 
-    const ck = chunkSize * 1024;
-    let processed = 0;
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i],
-        dc = fileCtrs[i];
-      job.currentFile = "[" + (i + 1) + "/" + files.length + "] " + f.name;
-      let pos = 0;
-      while (pos < f.size) {
-        if (job.cancelled) throw Error("cancel");
-        const end = Math.min(pos + ck, f.size);
-        const buf = await readChunk(f, pos, end, ck);
-        const enc = await aesEncrypt(buf, encKey, dc, pos / 16, 128);
-        bmp.wChunk(enc);
-        pos = end;
-        const done = processed + pos;
-        const totalData = layout.ds;
-        const pct =
-          totalData > 0 ? Math.min(100, ((done / totalData) * 100) | 0) : 100;
-        job.progress = pct;
-        postToClients({
-          type: "job-progress",
-          jobId,
-          progress: pct,
-          done,
-          total: totalData,
-          currentFile: "[" + (i + 1) + "/" + files.length + "] " + f.name,
-        });
-      }
-      processed += f.size;
-    }
+    jobs.set(jobId, {
+      kind: "encode",
+      files,
+      password,
+      targetBmpSize,
+      chunkSize,
+      segInfo,
+      encKey,
+      segSalt,
+      iter,
+      indexSalt,
+      status: "running",
+      progress: 0,
+      cancelled: false,
+      currentFile: "",
+      fileNames: files.map((f) => f.name),
+      totalFiles: files.length,
+      label: files.length + " 个文件编码",
+      encMagic,
+      fileEntries,
+    });
 
-    if (job.cancelled) throw Error("cancel");
-    const tail = bmp.pad();
-    await bmp.flushAll();
-    if (tail && tail.length) push(tail);
-    closeStream();
-
-    job.status = "done";
-    job.progress = 100;
     postToClients({
-      type: "job-done",
+      type: "job-new",
       jobId,
       kind: "encode",
-      filename: job.filename,
-      size: bmp.fs,
+      status: "running",
+      progress: 0,
+      totalFiles: files.length,
+      label: files.length + " 个文件编码",
     });
+
+    // 注册编码分组（供 /files?id=X&idx=Y 查找）
+    const prefixSum = [0];
+    for (let i = 1; i < segInfo.segCount; i++)
+      prefixSum[i] = prefixSum[i - 1] + segInfo.segments[i - 1].dataSize;
+
+    pendingEncodeGroups.set(jobId, {
+      jobId,
+      segCount: segInfo.segCount,
+      segments: segInfo.segments,
+      pending: new Array(segInfo.segCount).fill(null),
+      encodingStarted: false,
+      prefixSum,
+    });
+
+    if (event.source)
+      event.source.postMessage({
+        type: "encode-ready",
+        jobId,
+        segCount: segInfo.segCount,
+        segments: segInfo.segments.map((s) => ({
+          segID: s.segID,
+          type: s.type,
+          dataSize: s.dataSize,
+          payloadSize: s.payloadSize,
+        })),
+        totalSize: segInfo.fileTotalData,
+      });
   } catch (e) {
-    try {
-      closeStream();
-    } catch {}
-    pendingStreams.delete(jobId);
-    if (e.message === "cancel") {
-      jobs.delete(jobId);
-      job.status = "cancelled";
-      postToClients({ type: "job-update", jobId, status: "cancelled" });
-    } else {
-      jobs.delete(jobId);
-      job.status = "error";
-      job.error = e.message;
-      console.error(e);
-      postToClients({ type: "job-error", jobId, error: e.message });
+    console.error("编码准备失败", e);
+    if (event.source)
+      event.source.postMessage({
+        type: "encode-error",
+        jobId,
+        error: e.message,
+      });
+  }
+}
+
+/**
+ * 编码分卷流式响应 — 被 /file/<hash>/<filename> 调用
+ */
+async function serveEncodeSegmentStream(id, idx) {
+  const job = jobs.get(id);
+  if (!job || !job.segInfo) return new Response("任务不存在", { status: 404 });
+  const segInfo = job.segInfo.segments[idx];
+  if (!segInfo) return new Response("分卷不存在", { status: 404 });
+
+  const group = pendingEncodeGroups.get(id);
+  if (!group) return new Response("分组不存在", { status: 404 });
+
+  const shortId = (+id || Date.now()).toString(36);
+  const fileName =
+    "F2P." + shortId + "." + idx.toString(16).padStart(8, "0") + ".bmp";
+
+  // 创建延期响应：编码协调器完成后会 resolve 这个 stream
+  let resolveStream;
+  const streamPromise = new Promise((resolve) => {
+    resolveStream = resolve;
+  });
+  group.pending[idx] = resolveStream;
+
+  // 第一个请求触发顺序编码协调器
+  if (!group.encodingStarted) {
+    group.encodingStarted = true;
+    encodeSegmentsSequentially(id).catch((e) => {
+      console.error("顺序编码失败", e);
+      const g = pendingEncodeGroups.get(id);
+      if (g) {
+        for (let i = 0; i < g.pending.length; i++) {
+          if (g.pending[i])
+            g.pending[i](new Response("编码失败", { status: 500 }));
+        }
+        pendingEncodeGroups.delete(id);
+      }
+    });
+  }
+
+  const stream = await streamPromise;
+
+  const totalSize = 54 + 8 + segInfo.payloadSize;
+  const headers = new Headers({
+    "Content-Type": "image/bmp",
+    "Content-Disposition": 'attachment; filename="' + fileName + '"',
+    "Content-Length": String(totalSize),
+  });
+  return new Response(stream, { headers });
+}
+
+/**
+ * 顺序编码协调器 — 按分卷顺序逐个编码，降低内存峰值
+ */
+async function encodeSegmentsSequentially(id) {
+  const job = jobs.get(id);
+  const group = pendingEncodeGroups.get(id);
+  if (!job || !group) return;
+
+  const totalSegs = group.segCount;
+  const totalData = job.segInfo.fileTotalData;
+
+  // 编码锁：队列 FIFO，保证一次只有一个分卷在编
+  let encoding = false;
+  const lockQueue = [];
+
+  function makeRelease() {
+    return () => {
+      encoding = false;
+      if (lockQueue.length) {
+        const next = lockQueue.shift();
+        encoding = true;
+        next();
+      }
+    };
+  }
+
+  function acquireLock() {
+    if (!encoding) {
+      encoding = true;
+      return Promise.resolve(makeRelease());
+    }
+    return new Promise((resolve) =>
+      lockQueue.push(() => resolve(makeRelease())),
+    );
+  }
+
+  for (let i = 0; i < totalSegs; i++) {
+    if (job.cancelled) break;
+
+    const segInfo = group.segments[i];
+
+    // 等待该分卷的请求到达（带超时兜底）
+    const segWaitThresh = Date.now() + 30000;
+    while (!group.pending[i]) {
+      if (job.cancelled || Date.now() > segWaitThresh) break;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    if (!group.pending[i]) {
+      console.error("分卷请求超时 segID=" + segInfo.segID);
+      break;
+    }
+
+    // completedBefore = 该分卷之前已完成的数据量（前缀和 O(1)）
+    const completedBefore = group.prefixSum
+      ? group.prefixSum[segInfo.segID] || 0
+      : 0;
+
+    // 创建流，编码在 start() 中通过 acquireLock 串行化
+    const stream = new ReadableStream({
+      async start(controller) {
+        const release = await acquireLock();
+        try {
+          const push = (d) => controller.enqueue(d);
+          const closeStream = () => {
+            try {
+              controller.close();
+            } catch {}
+          };
+          const isCancelled = () => job.cancelled;
+
+          const reportProgress = (fraction) => {
+            if (totalData <= 0) return;
+            const overall =
+              (completedBefore + fraction * segInfo.dataSize) / totalData;
+            const pct = Math.min(100, Math.round(overall * 100));
+            if (pct !== (job.progress || 0)) {
+              job.progress = pct;
+              postToClients({
+                type: "job-progress",
+                jobId: id,
+                progress: pct,
+                total: totalData,
+                done: Math.round(overall * totalData),
+                currentFile:
+                  "[" + (i + 1) + "/" + totalSegs + "] " + segInfo.type,
+              });
+            }
+          };
+
+          if (isCancelled()) {
+            controller.error(new Error("已取消"));
+            return;
+          }
+
+          if (segInfo.segID === 0) {
+            await encodeIndexSegment(segInfo, job, push, closeStream, {
+              onProgress: reportProgress,
+              isCancelled,
+            });
+          } else {
+            await encodeDataSegment(segInfo, job, push, closeStream, {
+              onProgress: reportProgress,
+              isCancelled,
+            });
+          }
+
+          // 编码函数可能因取消提前返回（不抛异常），检测后错误终止流
+          if (isCancelled()) {
+            controller.error(new Error("已取消"));
+          }
+        } catch (e) {
+          controller.error(e);
+          console.error("编码分卷失败", segInfo.segID, e);
+        } finally {
+          release();
+        }
+      },
+      cancel() {
+        job.cancelled = true;
+      },
+    });
+
+    // 立即 resolve，让所有分卷同时拿到 stream
+    group.pending[i](stream);
+
+    // 更新主 job 进度
+    job.segCompleted = (job.segCompleted || 0) + 1;
+    const segPct = Math.round((job.segCompleted / totalSegs) * 100);
+    job.progress = Math.max(job.progress || 0, segPct);
+    postToClients({
+      type: "job-progress",
+      jobId: id,
+      progress: job.progress,
+    });
+  }
+
+  // 全部完成
+  if (!job.cancelled) {
+    job.status = "done";
+    job.progress = 100;
+    postToClients({ type: "job-done", jobId: id, kind: "encode" });
+  } else {
+    job.status = "cancelled";
+  }
+
+  // 清理：未完成的分卷请求 resolve 为 500（防止浏览器挂起等待）
+  for (let j = 0; j < group.pending.length; j++) {
+    if (typeof group.pending[j] === "function") {
+      group.pending[j](new Response("编码终止", { status: 500 }));
     }
   }
+
+  pendingEncodeGroups.delete(id);
+}
+
+/**
+ * F2P6 解码流式响应 — 被 /file/<hash>/<filename> 调用
+ */
+async function serveF2P6DecodeStream(id, idx) {
+  const group = pendingF2P6DecodeGroups.get(id);
+  if (!group) return new Response("任务不存在", { status: 404 });
+
+  const entry = group.entries[idx];
+  if (!entry) return new Response("索引无效", { status: 400 });
+
+  group.dispatched = (group.dispatched || 0) + 1;
+  if (group.dispatched >= group.entries.length)
+    pendingF2P6DecodeGroups.delete(id);
+
+  const keyRaw =
+    group.keyRaw instanceof Uint8Array
+      ? group.keyRaw
+      : new Uint8Array(group.keyRaw);
+  const key = await crypto.subtle.importKey(
+    "raw",
+    keyRaw,
+    { name: "AES-CTR" },
+    false,
+    ["decrypt"],
+  );
+
+  const indexBmpMeta = await readBmpHeader(group.indexBlob);
+  const indexInfo = {
+    key,
+    entries: group.entries,
+    dataInIndex: group.dataInIndex,
+    indexDataPayloadOffset: group.indexDataPayloadOffset,
+    bmpMeta: indexBmpMeta,
+    segSalt: new Uint8Array(group.indexSegSalt),
+  };
+
+  const dataSegments = [];
+  const segInfos = group.dataSegments || [];
+  for (const seg of segInfos) {
+    const bmpMeta = await readBmpHeader(seg.blob);
+    dataSegments.push({
+      segID: seg.segID,
+      segSalt: new Uint8Array(seg.segSalt),
+      dataSize: seg.dataSize,
+      dataOffset: seg.dataOffset,
+      bmpMeta,
+    });
+  }
+
+  const fileSize = entry.size;
+  const headers = attachHdr();
+  if (fileSize) headers.set("Content-Length", String(fileSize));
+
+  const gjId = id + "_" + idx;
+  const job = {
+    kind: "decode",
+    status: "running",
+    progress: 0,
+    currentFile: entry.name,
+    label: entry.name,
+    totalFiles: 1,
+  };
+  jobs.set(gjId, job);
+  postToClients({ type: "job-new", jobId: gjId, ...job });
+
+  const CHUNK = (group.chunkSize || 64) * 1024;
+  const stream = new ReadableStream({
+    async start(controller) {
+      postToClients({ type: "job-start", jobId: gjId });
+      try {
+        let offset = 0;
+        while (offset < fileSize && !job.cancelled) {
+          const take = Math.min(CHUNK, fileSize - offset);
+          const chunk = await extractFileDataRange(
+            indexInfo,
+            dataSegments,
+            idx,
+            offset,
+            take,
+          );
+          if (job.cancelled) break;
+          if (chunk.length === 0) break;
+          controller.enqueue(chunk);
+          offset += chunk.length;
+          const pct = Math.min(100, Math.round((offset / fileSize) * 100));
+          if (pct !== job.progress) {
+            job.progress = pct;
+            postToClients({
+              type: "job-progress",
+              jobId: gjId,
+              progress: pct,
+              done: offset,
+              total: fileSize,
+              currentFile: entry.name,
+            });
+          }
+        }
+        if (!job.cancelled) {
+          controller.close();
+          job.status = "done";
+          job.progress = 100;
+          postToClients({
+            type: "job-done",
+            jobId: gjId,
+            kind: "decode",
+            fileName: entry.name,
+            size: fileSize,
+          });
+        }
+      } catch (e) {
+        controller.error(e);
+        job.status = "error";
+        job.error = e.message;
+        postToClients({ type: "job-error", jobId: gjId, error: e.message });
+      }
+    },
+    cancel() {
+      job.cancelled = true;
+      job.status = "cancelled";
+      postToClients({ type: "job-update", jobId: gjId, status: "cancelled" });
+    },
+  });
+
+  return new Response(stream, { headers });
 }

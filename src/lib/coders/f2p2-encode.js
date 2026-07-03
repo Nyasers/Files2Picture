@@ -2,7 +2,7 @@
 // F2P2 编码器（加密，24-bit，通道映射 [2,1,0]）
 // ═══════════════════════════════════════════════
 
-import { buildBMPStream, aesEncrypt } from "../f2p-core.js";
+import { buildBMPStream, aesEncrypt, F2P2 } from "../f2p-core.js";
 
 /**
  * 预计算 F2P2 BMP 尺寸
@@ -45,7 +45,7 @@ export async function writeF2P2Header(
   fileNonces,
   nameEnc,
 ) {
-  bmp.w32(0x46325032); // F2P2 magic
+  bmp.w32(F2P2); // F2P2 magic
   bmp.w32(files.length);
   bmp.w8(nameEnc ? 1 : 0); // flags
   bmp.wChunk(salt);

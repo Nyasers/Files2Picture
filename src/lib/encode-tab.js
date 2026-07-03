@@ -4,9 +4,8 @@
 "use strict";
 
 import { fmt } from "./f2p-core.js";
-import { precomputeBmp } from "./f2p-encode.js";
 import { $, toast, sendToSW, waitForSw, triggerDownload } from "./sw-client.js";
-import { switchTab } from "./ui-shell.js";
+import { switchTab, getTargetBmpSize, setBmpSizeHint } from "./ui-shell.js";
 import { loadTemplate } from "./template.js";
 
 // ── 编码状态 ──
@@ -42,11 +41,41 @@ function addFs(fs) {
   if (a) toast("📎 已添加 " + a + " 个");
 }
 
+function rmF(i) {
+  sel.splice(i, 1);
+  updUI();
+}
+
 function mvF(i, dir) {
   const j = i + dir;
   if (j < 0 || j >= sel.length) return;
   [sel[i], sel[j]] = [sel[j], sel[i]];
   updUI();
+}
+
+// ── 分卷大小校验提示 ──
+
+function checkBmpSizeValid() {
+  const targetBmpSize = getTargetBmpSize();
+  if (targetBmpSize <= 0 || sel.length === 0) {
+    setBmpSizeHint("");
+    return;
+  }
+
+  const totalNameLen = sel.reduce(
+    (s, f) => s + new TextEncoder().encode(f.name).length,
+    0,
+  );
+  const fileListSize = sel.length * (2 + 8) + totalNameLen;
+  const minEncrypted = 32 + fileListSize;
+  const availEncrypted = targetBmpSize - 54 - 8 - 36;
+
+  if (availEncrypted < minEncrypted) {
+    const need = Math.ceil((minEncrypted + 54 + 8 + 36) / 1048576);
+    setBmpSizeHint("⚠️ 分卷太小，至少 " + need + " MB", true);
+  } else {
+    setBmpSizeHint("");
+  }
 }
 
 function updUI() {
@@ -55,6 +84,8 @@ function updUI() {
     encBtn.disabled = true;
     return;
   }
+
+  checkBmpSizeValid();
 
   // 保存滚动位置
   const oldBody = fileList.querySelector(".enc-file-body");
@@ -182,31 +213,51 @@ encDrop.addEventListener("drop", (e) => {
 
 encBtn.addEventListener("click", async () => {
   if (!sel.length) return;
+  // 立即禁用按钮，防止重复提交
+  encBtn.disabled = true;
+  encBtn.textContent = "⏳ 准备中…";
+
   await waitForSw();
   const password = encPwdInput.value;
   const chunkSize = parseInt(chunkSizeInput.value) || 64;
   const files = sel.slice();
   const jobId = Date.now() + "";
 
-  // 预计算 BMP 尺寸
-  const pc = precomputeBmp(files.map((f) => ({ name: f.name, size: f.size })));
-  const fn = "F2P_" + jobId + ".bmp";
+  const targetBmpSize = getTargetBmpSize();
 
-  // 下发编码任务（SW 同步设 pendingStreams，回复 ready）
+  // 分卷大小检查
+  if (targetBmpSize > 0) {
+    const totalNameLen = files.reduce(
+      (s, f) => s + new TextEncoder().encode(f.name).length,
+      0,
+    );
+    const fileListSize = files.length * (2 + 8) + totalNameLen;
+    const minEncrypted = 32 + fileListSize;
+    const availEncrypted = targetBmpSize - 54 - 8 - 36;
+    if (availEncrypted < minEncrypted) {
+      const need = Math.ceil((minEncrypted + 54 + 8 + 36) / 1048576);
+      toast("⚠️ 文件列表装不下索引分卷，至少需要 " + need + " MB");
+      encBtn.disabled = false;
+      encBtn.textContent = "🎨 生成";
+      return;
+    }
+  }
+
+  setBmpSizeHint("");
+
   sendToSW({
     type: "encode",
     files,
     password,
+    targetBmpSize,
     chunkSize,
     jobId,
-    filename: fn,
-    totalSize: pc.fs,
   });
 
   const ready = await new Promise((resolve) => {
     const handler = (e) => {
       const d = e.data;
-      if (d.jobId === jobId && d.type === "encode-stream-ready") {
+      if (d.jobId === jobId && d.type === "encode-ready") {
         navigator.serviceWorker.removeEventListener("message", handler);
         resolve(d);
       }
@@ -215,22 +266,29 @@ encBtn.addEventListener("click", async () => {
     setTimeout(() => {
       navigator.serviceWorker.removeEventListener("message", handler);
       resolve(null);
-    }, 5000);
+    }, 10000);
   });
 
   if (!ready) {
-    toast("⚠️ 编码流准备超时");
+    toast("⚠️ 编码准备超时");
+    encBtn.disabled = false;
+    encBtn.textContent = "🎨 生成";
     return;
   }
 
-  // 踢 GET /files?id=<jobId> 触发流式下载
-  triggerDownload("/files?id=" + jobId);
-
+  // 清空文件列表，切换到任务页跟踪进度
   sel = [];
   updUI();
-  // 重置拖放区和按钮状态
   encDropText.textContent = "拖放文件，或点击选择";
   encBtn.textContent = "🎨 生成";
-  toast("📤 编码任务已提交");
   switchTab("tasks");
+
+  // 触发所有下载（SW 按分卷顺序逐个 fulfill，降低内存峰值）
+  for (let i = 0; i < ready.segCount; i++) {
+    triggerDownload("/files?id=" + jobId + "&idx=" + i);
+  }
 });
+
+// ── 分卷大小变化时更新提示 ──
+
+$("targetBmpSize").addEventListener("change", checkBmpSizeValid);

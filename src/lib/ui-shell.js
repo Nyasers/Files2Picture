@@ -43,7 +43,7 @@ if (restoreTab && ["enc", "dec", "tasks"].includes(restoreTab)) {
 
 function storageGet(key) {
   try {
-    return localStorage.getItem(key);
+    return sessionStorage.getItem(key);
   } catch {
     return null;
   }
@@ -51,13 +51,13 @@ function storageGet(key) {
 
 function storageSet(key, val) {
   try {
-    localStorage.setItem(key, val);
+    sessionStorage.setItem(key, val);
   } catch {}
 }
 
 function storageRemove(key) {
   try {
-    localStorage.removeItem(key);
+    sessionStorage.removeItem(key);
   } catch {}
 }
 
@@ -122,3 +122,37 @@ chunkSizeInput.addEventListener("input", updateMemHint);
 
 // 初始化时同步一次（localStorage 恢复后）
 updateMemHint();
+
+// ── 分卷大小选择器 ──
+
+const bmpSizeSelect = $("targetBmpSize");
+const bmpSizeHint = $("bmpSizeHint");
+
+// 恢复上次选择
+const savedBmp = storageGet("f2p.bmpSize");
+if (savedBmp !== null) {
+  const valid = Array.from(bmpSizeSelect.options).some(
+    (o) => o.value === savedBmp,
+  );
+  if (valid) bmpSizeSelect.value = savedBmp;
+}
+
+bmpSizeSelect.addEventListener("change", () => {
+  storageSet("f2p.bmpSize", bmpSizeSelect.value);
+});
+
+/**
+ * 获取分卷大小（字节），0 = 不分卷
+ */
+export function getTargetBmpSize() {
+  const mb = parseInt(bmpSizeSelect.value) || 0;
+  return mb > 0 ? mb * 1048576 : 0;
+}
+
+/**
+ * 设置分卷大小提示
+ */
+export function setBmpSizeHint(text, isWarning) {
+  bmpSizeHint.textContent = text || "";
+  bmpSizeHint.className = "bmp-size-hint" + (isWarning ? " warn" : "");
+}

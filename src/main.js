@@ -18,7 +18,6 @@ if (!navigator.serviceWorker.controller) {
   navigator.serviceWorker.addEventListener("message", function (e) {
     if (e.data?.type === "sw-ready") location.reload();
   });
-  // 兜底：15s 仍未激活 → 提示 + 重试 initSW
   setTimeout(function () {
     if (!navigator.serviceWorker.controller) {
       var t = document.getElementById("toastContainer");
@@ -29,16 +28,12 @@ if (!navigator.serviceWorker.controller) {
         t.appendChild(e);
       }
       initSW();
-      if (window.deloading) window.deloading();
     }
   }, 15000);
   initSW();
+  if (window.deloading) window.deloading();
   return;
 }
 
-// ═══ 正常启动（SW 已就绪） ═══
-
 initSW();
-
-// 少女祈祷中 → 淡出
 if (window.deloading) window.deloading();

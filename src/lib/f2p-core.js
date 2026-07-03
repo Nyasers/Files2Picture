@@ -19,6 +19,15 @@ export function fmt(b) {
           : (b / 1099511627776).toFixed(2) + " TB";
 }
 
+// ── 版本魔数 ──
+
+export const F2P1 = 0x46325031;
+export const F2P2 = 0x46325032;
+export const F2P3 = 0x46325033;
+export const F2P4 = 0x46325034;
+export const F2P5 = 0x46325035;
+export const F2P6 = 0x46325036;
+
 // ── 加密工具 ──
 
 export async function deriveEncKey(password, salt, iterations, extractable) {

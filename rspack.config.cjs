@@ -23,7 +23,8 @@ module.exports = [
     },
     devServer: {
       port: 3000,
-      hot: true,
+      hot: false,
+      liveReload: false,
       open: false,
       static: { directory: distDir },
     },
