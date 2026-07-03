@@ -242,7 +242,7 @@ async function serveFromCache(request, event) {
   const cached = await cache.match(cacheUrl);
   if (cached) return cached;
   try {
-    const res = await fetch(request.url, { redirect: "follow" });
+    const res = await fetch(pn === "/index.html" ? "/" : request.url);
     if (res.ok) event?.waitUntil(cache.put(cacheUrl, res.clone()));
     return res;
   } catch {
