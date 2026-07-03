@@ -96,9 +96,9 @@ const FETCH_TIMEOUT = 10000;
 function fetchWithTimeout(url, ms) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms || FETCH_TIMEOUT);
-  return fetch(url, { signal: controller.signal }).finally(() =>
-    clearTimeout(timer),
-  );
+  return fetch(url === "/index.html" ? "/" : url, {
+    signal: controller.signal,
+  }).finally(() => clearTimeout(timer));
 }
 
 // ── 路径白名单（path → hash，与 IndexedDB 同步）──
@@ -242,7 +242,7 @@ async function serveFromCache(request, event) {
   const cached = await cache.match(cacheUrl);
   if (cached) return cached;
   try {
-    const res = await fetch(pn === "/index.html" ? "/" : request.url);
+    const res = await fetch(request);
     if (res.ok) event?.waitUntil(cache.put(cacheUrl, res.clone()));
     return res;
   } catch {
