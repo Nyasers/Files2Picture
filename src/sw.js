@@ -332,6 +332,20 @@ self.addEventListener("fetch", async (event) => {
   const url = new URL(event.request.url);
 
   // ════════════════════════════════════════
+  // 导航触发增量更新检查
+  //   每次用户打开/刷新页面时后台拉取 hashes.json，对比 hash 做增量缓存更新
+  //   syncManifest 内部有 60s promise 缓存，短时间多次导航不会重复 fetch
+  // ════════════════════════════════════════
+
+  if (event.request.mode === "navigate") {
+    event.waitUntil(
+      syncManifest().catch((e) =>
+        console.warn("导航触发的 syncManifest 失败:", e),
+      ),
+    );
+  }
+
+  // ════════════════════════════════════════
   // 原有流式下载逻辑（保持不变）
   // ════════════════════════════════════════
 
