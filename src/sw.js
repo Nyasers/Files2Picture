@@ -106,11 +106,11 @@ function fetchWithTimeout(url, ms) {
   }).finally(() => clearTimeout(timer));
 }
 
-// ── 路径白名单（path → hash，与 IndexedDB 同步）──
+// ── 缓存路径映射表（path → hash，与 IndexedDB 同步）──
 
 let cachedPaths = new Map();
 
-// SW 启动时从 IDB 恢复白名单
+// SW 启动时从 IDB 恢复 hash 表
 // 异步执行，加载完成前所有请求走默认浏览器行为
 getAllHashes().then(
   (hashes) => {
@@ -131,7 +131,7 @@ async function syncManifest() {
   return (syncManifest.promise ??= fetchWithTimeout(MANIFEST_URL)
     .then((res) => res.json())
     .then((raw) => {
-      // hashtable.json 的 key 不含前导 /，加上再往下传
+      // hashes.json 的 key 不含前导 /，加上再往下传
       const m = {};
       for (const [key, hash] of Object.entries(raw)) m["/" + key] = hash;
       return m;

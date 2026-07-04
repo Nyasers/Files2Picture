@@ -156,8 +156,6 @@ export function precomputeSegments(files, targetBmpSize) {
   };
 }
 
-// ── 死代码已删除：buildFileEntries（被 buildFileEntriesFromFiles 替代）
-
 /**
  * 调用前必须已 push(bmp.header)，函数通过 bmp.w* 写入 payload。
  *

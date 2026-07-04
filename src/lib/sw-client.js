@@ -95,7 +95,7 @@ navigator.serviceWorker.addEventListener("message", (event) => {
   if (handlers) handlers.forEach((h) => h(msg));
 });
 
-// ── GET 触发流式下载（REST 风格，无 iframe）──
+// ── GET 触发流式下载（REST 风格，隐藏 iframe 触发）──
 
 const TRIGGER_TIMEOUT_MS = 30000; // 30s 兜底，慢设备足够
 

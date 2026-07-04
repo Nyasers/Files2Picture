@@ -272,7 +272,7 @@ export function buildBMPStream(payloadSize, onRow) {
         writeChain = writeChain.then(() => onRow(copy));
         rowIdx++;
       }
-      // 填充剩余空行（仅当 pds > ps 时触发，但新方案 pds ≤ ps 不会走到这里）
+      // 填充剩余空行（仅当 pds > ps 时触发，当前实现 pds ≤ ps 不会走到这里）
       while (rowIdx < h && onRow) {
         const copy = new Uint8Array(rb);
         writeChain = writeChain.then(() => onRow(copy));

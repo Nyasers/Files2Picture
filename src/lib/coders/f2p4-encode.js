@@ -40,7 +40,6 @@ export function createBmpWriter(layout, onRow) {
  * @param {CryptoKey} encKey
  * @param {{name:string,size:number}[]} files
  * @param {Uint8Array[]} fileNonces - 每文件 12B
- * @param {boolean} nameEnc
  */
 export async function writeF2P4Header(bmp, salt, encKey, files, fileNonces) {
   bmp.w32(F2P4); // F2P4 magic
