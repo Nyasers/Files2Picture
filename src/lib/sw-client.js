@@ -17,11 +17,26 @@ const controllerChangeCallbacks = [];
 
 export const $ = (id) => document.getElementById(id);
 
-// ── Toast ──
+// ── Toast（事件回调 + DOM 降级）──
+
+const toastHandlers = [];
+
+export function onToast(handler) {
+  toastHandlers.push(handler);
+  return () => {
+    const i = toastHandlers.indexOf(handler);
+    if (i >= 0) toastHandlers.splice(i, 1);
+  };
+}
 
 const tc = $("toastContainer");
 
 export function toast(m, d = 0x0d00) {
+  if (toastHandlers.length) {
+    toastHandlers.forEach((h) => h(m, d));
+    return;
+  }
+  // DOM 降级（Vue 接管后不走这里）
   const e = document.createElement("div");
   e.className = "toast";
   e.textContent = m;
@@ -111,27 +126,33 @@ export function triggerDownload(url) {
   document.body.appendChild(f);
   f.src = url;
 
-  // 用 Promise.race 竞争：收到 job-start 则清理，超时也清理
   let cleanup;
-  const cleanupPromise = new Promise((resolve) => {
-    cleanup = resolve;
-  });
+  let started = false;
+  const settledPromise = new Promise((resolve) => { cleanup = resolve; });
 
   const handler = (e) => {
-    if (e.data.type === "job-start" && e.data.jobId === extractedJobId) {
+    const msg = e.data;
+    if (!msg || msg.jobId !== extractedJobId) return;
+    if (msg.type === "job-start") {
+      started = true;
+      return; // 继续等待 job-done / job-error
+    }
+    if (msg.type === "job-done" || msg.type === "job-error") {
       navigator.serviceWorker.removeEventListener("message", handler);
       cleanup();
     }
   };
   navigator.serviceWorker.addEventListener("message", handler);
 
-  Promise.race([
-    cleanupPromise,
-    new Promise((resolve) => setTimeout(resolve, TRIGGER_TIMEOUT_MS)),
-  ]).then(() => {
+  // 兜底：60s 后无论如何清理
+  setTimeout(() => {
     navigator.serviceWorker.removeEventListener("message", handler);
+    cleanup();
+  }, 60000);
+
+  settledPromise.then(() => {
     if (f.parentNode) {
-      setTimeout(() => f.remove(), 465); // 0o0721 保持一致的延迟后移除
+      setTimeout(() => f.remove(), 465);
     }
   });
 }
@@ -164,6 +185,18 @@ function resolveStatus() {
   return _cachedStatus || (_cachedStatus = $("swStatus"));
 }
 
+// ── SW 状态回调 ──
+
+const statusHandlers = [];
+
+export function onStatusChange(handler) {
+  statusHandlers.push(handler);
+  return () => {
+    const i = statusHandlers.indexOf(handler);
+    if (i >= 0) statusHandlers.splice(i, 1);
+  };
+}
+
 export function getSWStatus() {
   const st = resolveStatus();
   if (!st) return "gray";
@@ -174,6 +207,7 @@ export function getSWStatus() {
 }
 
 function setStatus(color, label) {
+  statusHandlers.forEach((h) => h(color, label));
   if (!SW_COLOR_SET.has(color)) color = "gray";
   // 取消等待中的自动转绿，防止覆盖后续状态变更
   if (statusTimer) {
