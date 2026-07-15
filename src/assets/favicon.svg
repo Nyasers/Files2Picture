@@ -3,27 +3,27 @@
   <desc>Files to Picture — file icon encoded into pixel data</desc>
 
   <!-- File icon body -->
-  <path d="M18 10h20l14 14v28a3 3 0 0 1-3 3H21a3 3 0 0 1-3-3V13a3 3 0 0 1 3-3z" fill="#5f83f7"/>
+  <path d="M23 13h21l10 8v27a3 3 0 0 1-3 3H23a3 3 0 0 1-3-3V16a3 3 0 0 1 3-3z" fill="#5f83f7"/>
 
-  <!-- Folded corner -->
-  <path d="M38 10v10a4 4 0 0 0 4 4h10" fill="none" stroke="#4a6be0" stroke-width="1.5"/>
+  <!-- Fold crease -->
+  <path d="M44 13l10 8" fill="none" stroke="#4a6be0" stroke-width="1.5" stroke-linecap="round"/>
 
   <!-- Text lines inside file -->
-  <rect x="24" y="24" width="14" height="2" rx="0.5" fill="rgba(255,255,255,0.20)"/>
-  <rect x="24" y="29" width="11" height="2" rx="0.5" fill="rgba(255,255,255,0.15)"/>
-  <rect x="24" y="34" width="9" height="2" rx="0.5" fill="rgba(255,255,255,0.12)"/>
+  <rect x="25" y="22" width="13" height="2" rx="0.5" fill="rgba(255,255,255,0.20)"/>
+  <rect x="25" y="27" width="10" height="2" rx="0.5" fill="rgba(255,255,255,0.15)"/>
+  <rect x="25" y="32" width="8" height="2" rx="0.5" fill="rgba(255,255,255,0.12)"/>
 
   <!-- Data pixels inside file -->
-  <rect x="30" y="24" width="3" height="3" rx="0.5" fill="#4caf7d"/>
-  <rect x="28" y="34" width="3" height="3" rx="0.5" fill="#9b7fd4"/>
+  <rect x="31" y="22" width="3" height="3" rx="0.5" fill="#4caf7d"/>
+  <rect x="29" y="32" width="3" height="3" rx="0.5" fill="#9b7fd4"/>
 
-  <!-- Pixel encoding: bottom of file dissolving -->
-  <rect x="24" y="41" width="3.5" height="3.5" rx="0.7" fill="#5f83f7"/>
-  <rect x="29.5" y="41" width="3.5" height="3.5" rx="0.7" fill="#4caf7d"/>
-  <rect x="35" y="41" width="3.5" height="3.5" rx="0.7" fill="#9b7fd4"/>
+  <!-- Pixel encoding at bottom (all inside file body) -->
+  <rect x="26" y="38" width="3.5" height="3.5" rx="0.7" fill="#5f83f7"/>
+  <rect x="31.5" y="38" width="3.5" height="3.5" rx="0.7" fill="#4caf7d"/>
+  <rect x="37" y="38" width="3.5" height="3.5" rx="0.7" fill="#9b7fd4"/>
 
-  <rect x="26" y="46.5" width="2.5" height="2.5" rx="0.5" fill="#5f83f7" opacity="0.55"/>
-  <rect x="31.5" y="46.5" width="2.5" height="2.5" rx="0.5" fill="#7a99fa" opacity="0.45"/>
+  <rect x="28" y="43" width="2.5" height="2.5" rx="0.5" fill="#5f83f7" opacity="0.55"/>
+  <rect x="33.5" y="43" width="2.5" height="2.5" rx="0.5" fill="#7a99fa" opacity="0.45"/>
 
-  <rect x="28.5" y="51" width="1.5" height="1.5" rx="0.3" fill="#5f83f7" opacity="0.30"/>
+  <rect x="30.5" y="46" width="1.5" height="1.5" rx="0.3" fill="#5f83f7" opacity="0.30"/>
 </svg>
