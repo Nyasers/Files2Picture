@@ -386,7 +386,7 @@ async function prepareF2P6Decode() {
   const gid = Date.now() + "";
   sendToSW({
     type: "f2p6-decode-group", id: gid,
-    entries: decodeResult.value.indexInfo.entries,
+    entries: decodeResult.value.indexInfo.entries.map(e => ({ name: e.name, size: e.size, globalOffset: e.globalOffset })),
     keyRaw: Array.from(new Uint8Array(rawKey)),
     indexBlob: decodeResult.value.indexInfo.bmpMeta.blob,
     indexSegSalt: Array.from(decodeResult.value.indexInfo.segSalt),
