@@ -50,6 +50,49 @@ body {
   min-height: 100vh;
 }
 
+/* ═══ App Header ═══ */
+
+.app-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-logo {
+  flex-shrink: 0;
+}
+
+.app-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1;
+}
+
+.app-tagline {
+  font-size: 13px;
+  font-weight: 300;
+  color: var(--text-muted);
+  margin-left: 10px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+
+/* ═══ App Footer ═══ */
+
+.app-footer {
+  margin-top: 16px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
 /* ═══ TopBar ═══ */
 
 .top-bar {
@@ -683,9 +726,6 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  margin-top: 16px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
   font-size: 12px;
 }
 

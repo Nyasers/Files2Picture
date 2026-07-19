@@ -1,5 +1,21 @@
 <template>
   <div class="app-shell">
+    <div class="app-header">
+      <div class="app-brand">
+        <svg class="app-logo" width="24" height="24" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M23 13h21l10 8v27a3 3 0 0 1-3 3H23a3 3 0 0 1-3-3V16a3 3 0 0 1 3-3z" fill="var(--accent)"/>
+          <path d="M44 13l10 8" fill="none" stroke="var(--accent-hover)" stroke-width="1.5" stroke-linecap="round"/>
+          <rect x="25" y="22" width="13" height="2" rx="0.5" fill="rgba(255,255,255,0.20)"/>
+          <rect x="25" y="27" width="10" height="2" rx="0.5" fill="rgba(255,255,255,0.15)"/>
+          <rect x="26" y="38" width="3.5" height="3.5" rx="0.7" fill="var(--accent)"/>
+          <rect x="31.5" y="38" width="3.5" height="3.5" rx="0.7" fill="var(--success)"/>
+          <rect x="37" y="38" width="3.5" height="3.5" rx="0.7" fill="#9b7fd4"/>
+        </svg>
+        <h1 class="app-title">F2P</h1>
+        <span class="app-tagline">隐于无形，读之如晤</span>
+      </div>
+    </div>
+
     <TopBar
       :activeTab="activeTab"
       @tab-change="switchTab"
@@ -12,7 +28,9 @@
     <DecodePanel v-show="activeTab === 'dec'" />
     <TasksPanel v-show="activeTab === 'tasks'" />
 
-    <SWStatus />
+    <div class="app-footer">
+      <SWStatus />
+    </div>
     <ToastHost />
   </div>
 </template>
