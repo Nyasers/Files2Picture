@@ -1,5 +1,17 @@
 # 更新日志
 
+## 2026-07-19
+
+### Vue 迁移
+
+- 源码从原生 JS 模块重构为 Vue 3 组件架构，新增 App.vue 根组件
+- UI 各模块拆分为独立 Vue 组件：TopBar、EncodePanel、DecodePanel、TasksPanel、ToastHost、SWStatus
+- 新增 composables/useSettings.js 统一管理 localStorage 持久化
+- 新增 assets/ 目录（favicon.svg、manifest.json）
+- 构建配置新增 vue-loader
+- 修复 header 由原生 DOM 构造到 Vue 模板的衔接问题
+- 同步更新 package.json 依赖及 rspack 配置
+
 ## 2026-07-03
 
 ### F2P6 分卷编码
